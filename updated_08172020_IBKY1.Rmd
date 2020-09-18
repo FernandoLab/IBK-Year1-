@@ -1,6 +1,6 @@
 ---
 title: "IBK_08172020"
-author: "Ali Bartenslager"
+author: "Alison Bartenslager"
 date: "8/17/2020"
 output: html_document
 ---
@@ -521,8 +521,6 @@ load("norm_IBK.rds")
 
 ##rarefy 
 ```{r ,echo=TRUE}
-
-#test <- subset_samples(ps_IBK_analyze, ELISA == "YES")
 ps_rarefy <- rarefy_even_depth(ps_IBK_analyze, sample.size = min(sample_sums(ps_IBK_analyze)),
   rngseed = T, replace = TRUE, trimOTUs = TRUE, verbose = TRUE)
 Chao1_obser_rarefy= estimate_richness(ps_rarefy, split = TRUE, measures = c("Chao1"))
@@ -541,11 +539,14 @@ alpha_meas = c("Observed", "Chao1")
 (p <- plot_richness(ps_rarefy, "Time", measures=alpha_meas))
 pdf("alpha.pdf")
 test <- (p + geom_boxplot(data=p$data, aes(x=Time, y=value, color=NULL), alpha=0.1)) 
+
+
+#making a pdf version
 pdf("alpha.pdf")
 plot(test)
 dev.off()
 
-
+#running a wilcox t test
 observed_pairwise <- pairwise.wilcox.test(obser_rarefy$Observed, sample_data(ps_rarefy)$Time)
 chao1_pairwise <- pairwise.wilcox.test(Chao1_obser_rarefy$Chao1, sample_data(ps_rarefy)$Time)
 
@@ -556,8 +557,9 @@ chao1_pairwise <- pairwise.wilcox.test(Chao1_obser_rarefy$Chao1, sample_data(ps_
 ```{r ,echo=TRUE}
 
 ord.nmds.pcoa <- ordinate(norm_IBK, method="PCoA", distance="wunifrac")
-beta <-plot_ordination(norm_IBK, ord.nmds.pcoa, axes = c(1,2), color="Time", title="ds_weighted") 
+beta <-plot_ordination(norm_IBK, ord.nmds.pcoa, color="Time", ) 
 
+#creating a pdf version
 pdf("beta.pdf")
 plot(beta)
 dev.off()
@@ -603,7 +605,7 @@ metadata <- as(sample_data(norm_IBK_autogenous), "data.frame")
 
 adonis(phyloseq::distance(norm_IBK_autogenous, method="wunifrac") ~ Time + Hide + Sex + Breed + Days_from_birth + Ulcer_positive,
        data = metadata)
-
+###WILL NOT USE
 ```
 
 
@@ -724,7 +726,7 @@ write.table(core_ps_period4, "ps_p4.txt")
 
 #merging ASVs together for core of each individual time point
 ```{r ,echo=TRUE}
-
+#found unique asvs from code above
 ASV_periods <- c("ASV_1","ASV_2","ASV_3","ASV_4","ASV_7","ASV_8","ASV_9","ASV_10","ASV_12","ASV_13","ASV_15","ASV_17","ASV_18","ASV_19","ASV_20","ASV_21","ASV_23","ASV_25","ASV_27","ASV_28","ASV_29","ASV_30","ASV_32","ASV_35","ASV_36","ASV_37","ASV_39","ASV_40","ASV_41","ASV_44","ASV_45","ASV_46","ASV_49","ASV_50","ASV_51","ASV_52","ASV_54","ASV_55","ASV_56","ASV_59","ASV_60","ASV_61","ASV_64","ASV_65","ASV_67","ASV_70","ASV_77","ASV_81","ASV_82","ASV_92","ASV_99","ASV_100","ASV_108","ASV_156" )
 
 
@@ -790,9 +792,11 @@ dim(core_54_df)
 
 input_input <- as.matrix(core_54_df)
 dim(input_input)
+##reading out table to combine ASV# with ASV classification
+write.table(otu_table(core_54), file = "input_dendrogram.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+write.table(tax_table(core_ASV_IBK_54), file = "input_taxa_core.txt", sep = "\t", quote = F, row.names = T, col.names = NA)
 
-#write.table(otu_table(core_54), file = "input_dendrogram.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
-#write.table(tax_table(core_ASV_IBK_54), file = "input_taxa_core.txt", sep = "\t", quote = F, row.names = T, col.names = NA)
+##reading back in
 run_dendrogram <- read.table("input_dendrogram_run.txt",  sep = "\t", header = T, quote = "", stringsAsFactors = F, row.names = 1)
 run_dendrogram <- as.matrix(run_dendrogram)
 
@@ -813,6 +817,7 @@ col_col <- col_col[order(order.dendrogram(wuni_dend_IBK_t))]
 heatmap.2(run_dendrogram, scale = "none", col = colorpanel(100, low = "grey", high = "black"), Colv = wuni_dend_IBK_t,
           trace = "none", density = "none", breaks = seq(from=min(range(run_dendrogram)), to=max(range(run_dendrogram)), length.out = 101), symm = F, symkey = F, symbreaks = T, cexRow=0.5, labCol = col_labels, colCol = col_col, ColSideColors = col_col, key = T, margins = c(2,10), dendrogram = "column")
 
+#making a pdf to export
 pdf("core_54.pdf")
 plot(heatmap.2(run_dendrogram, scale = "none", col = colorpanel(100, low = "grey", high = "black"), Colv = wuni_dend_IBK_t,
           trace = "none", density = "none", breaks = seq(from=min(range(run_dendrogram)), to=max(range(run_dendrogram)), length.out = 101), symm = F, symkey = F, symbreaks = T, cexRow=0.5, labCol = col_labels, colCol = col_col, ColSideColors = col_col, key = T, margins = c(2,10), dendrogram = "column"))
@@ -821,7 +826,7 @@ dev.off()
 
 #filtering core without (ASV_1, ASV_2, ASV_3) to make dendrogram with heatmap
 ```{r ,echo=TRUE}
-
+#filtering off asv 1, 2, 3
 core_51 <- c("ASV_4","ASV_7","ASV_8","ASV_9","ASV_10","ASV_12","ASV_13","ASV_15","ASV_17","ASV_18","ASV_19","ASV_20","ASV_21","ASV_23","ASV_25","ASV_27","ASV_28","ASV_29","ASV_30","ASV_32","ASV_35","ASV_36","ASV_37","ASV_39","ASV_40","ASV_41","ASV_44","ASV_45","ASV_46","ASV_49","ASV_50","ASV_51","ASV_52","ASV_54","ASV_55","ASV_56","ASV_59","ASV_60","ASV_61","ASV_64","ASV_65","ASV_67","ASV_70","ASV_77","ASV_81","ASV_82","ASV_92","ASV_99","ASV_100","ASV_108","ASV_156" )
 core_51
 allTaxa_IBK_periods_51 <- taxa_names(norm_IBK)
@@ -837,9 +842,11 @@ dim(core_51_df)
 
 input51 <- as.matrix(core_51_df)
 dim(input51)
+##reading out table to combine ASV# with ASV classification
+write.table(input51, file = "input_dendrogram_51.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+write.table(tax_table(core_ASV_IBK_periods_51), file = "input_taxa_core_51.txt", sep = "\t", quote = F, row.names = T, col.names = NA)
 
-#write.table(input51, file = "input_dendrogram_51.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
-#write.table(tax_table(core_ASV_IBK_periods_51), file = "input_taxa_core_51.txt", sep = "\t", quote = F, row.names = T, col.names = NA)
+##reading back in
 run_dendrogram_51 <- read.table("input_dendrogram_51_run.txt",  sep = "\t", header = T, quote = "", stringsAsFactors = F, row.names = 1)
 run_dendrogram_51 <- as.matrix(run_dendrogram_51)
 
@@ -862,6 +869,7 @@ col_col <- col_col[order(order.dendrogram(wuni_dend_IBK_t))]
 heatmap.2(run_dendrogram_51, scale = "none", col = colorpanel(100, low = "grey", high = "black"), Colv = wuni_dend_IBK_t,
           trace = "none", density = "none", breaks = seq(from=min(range(0.0)), to=max(range(0.05)), length.out = 101), symm = F, symkey = F, symbreaks = T, labCol = col_labels, colCol = col_col, cexRow = 0.5, ColSideColors = col_col, key = T, dendrogram = "column", margins = c(2, 10.0), scale(0.01))
 
+#making a pdf version
 pdf("core_51.pdf")
 plot(heatmap.2(run_dendrogram_51, scale = "none", col = colorpanel(100, low = "grey", high = "black"), Colv = wuni_dend_IBK_t,
           trace = "none", density = "none", breaks = seq(from=min(range(0.0)), to=max(range(0.05)), length.out = 101), symm = F, symkey = F, symbreaks = T, labCol = col_labels, colCol = col_col, cexRow = 0.5, ColSideColors = col_col, key = T, dendrogram = "column", margins = c(2, 10.0), scale(0.01)))
@@ -942,9 +950,9 @@ write.table(otu_table(morax_ulcer), "morax_ulcer.txt", sep = "\t", row.names = T
 #PCoA_weighted_Ulcer
 ```{r ,echo=TRUE}
 ps_ulcer_positive <- subset_samples(norm_IBK, infected != "NONE")
-
+View(mappingfile_IBKY1)
 ord.nmds.pcoa1 <- ordinate(ps_ulcer_positive, method="PCoA", distance="wunifrac")
-ulcer_beta <- plot_ordination(ps_ulcer_positive, ord.nmds.pcoa1, color="infected", title="ulcer_positive_cattle")+
+ulcer_beta <- plot_ordination(ps_ulcer_positive, ord.nmds.pcoa1, color="infected")+
   geom_point(size=7)
 
 pdf("ulcer_beta.pdf")
@@ -978,7 +986,7 @@ t.test(observed,
 library(DESeq2)
 ps_ulcer <- subset_samples(ps_IBK_analyze, infected != "NONE")
 
-diagdds = phyloseq_to_deseq2(ps_ulcer, ~ Ulcer_positive)
+diagdds = phyloseq_to_deseq2(ps_ulcer, ~ infected)
 # calculate geometric means prior to estimate size factors
 gm_mean = function(x, na.rm=TRUE){
   exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
@@ -996,7 +1004,7 @@ diagdds = DESeq(diagdds)  #, fitType='local')
 res_IBK = results(diagdds)
 res_IBK = res_IBK[order(res_IBK$padj, na.last = NA), ]
 alpha = 0.05
-keepOTUs_IBK_ulcer = rownames(res_IBK[res_IBK$padj > alpha, ])[1:50]
+keepOTUs_IBK_ulcer = rownames(res_IBK[res_IBK$padj < alpha, ])[1:50] #looking at top diff asvs between pre and post infection
 kosticTrimvs_IBK_ulcer = prune_taxa(keepOTUs_IBK, ps_ulcer)
 kosticTrimvs_IBK_ulcer
 #View(kosticTrimvs_IBK)
@@ -1014,11 +1022,12 @@ allTaxa1_IBK_ulcer <- allTaxa_IBK_ulcer[(allTaxa_IBK_ulcer %in% ulcer)]
 diff_ASV_IBK_ulcer <- prune_taxa(allTaxa1_IBK_ulcer, ps_ulcer)
 taxa_names(diff_ASV_IBK_ulcer)
 save(diff_ASV_IBK_ulcer, file = "diff_ASV_IBK_ulcer.rds")
-load("diff_ASV_IBK_ulcer.rds")
+#load("diff_ASV_IBK_ulcer.rds")
 
 #heatmap
 plot_heatmap(diff_ASV_IBK_ulcer, sample.label = "infected", sample.order = "Time", taxa.order= "Phylum", taxa.label = "Family")
 
+#saving a pdf version
 pdf("ulcer_diff.pdf")
 plot(plot_heatmap(diff_ASV_IBK_ulcer, sample.label = "infected", sample.order = "Time", taxa.order= "Phylum", taxa.label = "Family"))
 dev.off()
@@ -1050,7 +1059,7 @@ diagdds = DESeq(diagdds)  #, fitType='local')
 res_IBK = results(diagdds)
 res_IBK = res_IBK[order(res_IBK$padj, na.last = NA), ]
 alpha = 0.05
-keepOTUs25_p12 = rownames(res_IBK[res_IBK$padj > alpha, ])[1:25]
+keepOTUs25_p12 = rownames(res_IBK[res_IBK$padj < alpha, ])[1:25]
 kosticTrimvs25_IBK_p12 = prune_taxa(keepOTUs25_p12, norm_IBK)
 kosticTrimvs25_IBK_p12
 #View(kosticTrimvs_IBK)
@@ -1085,13 +1094,13 @@ diagdds = DESeq(diagdds)  #, fitType='local')
 res_IBK = results(diagdds)
 res_IBK = res_IBK[order(res_IBK$padj, na.last = NA), ]
 alpha = 0.05
-keepOTUs25_p13 = rownames(res_IBK[res_IBK$padj > alpha, ])[1:25]
+keepOTUs25_p13 = rownames(res_IBK[res_IBK$padj < alpha, ])[1:25]
 kosticTrimvs25_IBK_p13 = prune_taxa(keepOTUs25_p13, norm_IBK)
 kosticTrimvs25_IBK_p13
 #View(kosticTrimvs_IBK)
-save(kosticTrimvs25_IBK_p13, file = "kosticTrimvs25_p13.rds")
+#save(kosticTrimvs25_IBK_p13, file = "kosticTrimvs25_p13.rds")
 #load("kosticTrimvs_p13.rds")
-write.table(otu_table(kosticTrimvs25_IBK_p13), "kosticTrimvs25_IBK_p13.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+#write.table(otu_table(kosticTrimvs25_IBK_p13), "kosticTrimvs25_IBK_p13.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
 plot_heatmap(kosticTrimvs25_IBK_p13, sample.label = "Time", sample.order = "Time", taxa.order= "Phylum", taxa.label = "Family")
 ```
 
@@ -1120,13 +1129,13 @@ diagdds = DESeq(diagdds)  #, fitType='local')
 res_IBK = results(diagdds)
 res_IBK = res_IBK[order(res_IBK$padj, na.last = NA), ]
 alpha = 0.05
-keepOTUs25_p14 = rownames(res_IBK[res_IBK$padj > alpha, ])[1:25]
+keepOTUs25_p14 = rownames(res_IBK[res_IBK$padj < alpha, ])[1:25]
 kosticTrimvs25_IBK_p14 = prune_taxa(keepOTUs25_p14, norm_IBK)
 kosticTrimvs25_IBK_p14
 #View(kosticTrimvs_IBK)
-save(kosticTrimvs25_IBK_p14, file = "kosticTrimvs25_p14.rds")
+#save(kosticTrimvs25_IBK_p14, file = "kosticTrimvs25_p14.rds")
 #load("kosticTrimvs_p14.rds")
-write.table(otu_table(kosticTrimvs25_IBK_p14), "kosticTrimvs25_IBK_p14.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+#write.table(otu_table(kosticTrimvs25_IBK_p14), "kosticTrimvs25_IBK_p14.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
 plot_heatmap(kosticTrimvs25_IBK_p14, sample.label = "Time", sample.order = "Time", taxa.order= "Phylum", taxa.label = "Family")
 ```
 
@@ -1155,13 +1164,13 @@ diagdds = DESeq(diagdds)  #, fitType='local')
 res_IBK = results(diagdds)
 res_IBK = res_IBK[order(res_IBK$padj, na.last = NA), ]
 alpha = 0.05
-keepOTUs25_p23 = rownames(res_IBK[res_IBK$padj > alpha, ])[1:25]
+keepOTUs25_p23 = rownames(res_IBK[res_IBK$padj < alpha, ])[1:25]
 kosticTrimvs25_IBK_p23 = prune_taxa(keepOTUs25_p23, norm_IBK)
 kosticTrimvs25_IBK_p23
 #View(kosticTrimvs_IBK)
-save(kosticTrimvs25_IBK_p23, file = "kosticTrimvs25_p23.rds")
+#save(kosticTrimvs25_IBK_p23, file = "kosticTrimvs25_p23.rds")
 #load("kosticTrimvs_p23.rds")
-write.table(otu_table(kosticTrimvs25_IBK_p23), "kosticTrimvs25_IBK_p23.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+#write.table(otu_table(kosticTrimvs25_IBK_p23), "kosticTrimvs25_IBK_p23.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
 plot_heatmap(kosticTrimvs25_IBK_p23, sample.label = "Time", sample.order = "Time", taxa.order= "Phylum", taxa.label = "Family")
 ```
 
@@ -1190,13 +1199,13 @@ diagdds = DESeq(diagdds)  #, fitType='local')
 res_IBK = results(diagdds)
 res_IBK = res_IBK[order(res_IBK$padj, na.last = NA), ]
 alpha = 0.05
-keepOTUs25_p24 = rownames(res_IBK[res_IBK$padj > alpha, ])[1:25]
+keepOTUs25_p24 = rownames(res_IBK[res_IBK$padj < alpha, ])[1:25]
 kosticTrimvs25_IBK_p24 = prune_taxa(keepOTUs25_p24, norm_IBK)
 kosticTrimvs25_IBK_p24
 #View(kosticTrimvs_IBK)
-save(kosticTrimvs25_IBK_p24, file = "kosticTrimvs25_p24.rds")
+#save(kosticTrimvs25_IBK_p24, file = "kosticTrimvs25_p24.rds")
 #load("kosticTrimvs_p23.rds")
-write.table(otu_table(kosticTrimvs25_IBK_p24), "kosticTrimvs25_IBK_p24.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+#write.table(otu_table(kosticTrimvs25_IBK_p24), "kosticTrimvs25_IBK_p24.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
 plot_heatmap(kosticTrimvs25_IBK_p24, sample.label = "Time", sample.order = "Time", taxa.order= "Phylum", taxa.label = "Family")
 ```
 #period 3 and 4
@@ -1224,37 +1233,25 @@ diagdds = DESeq(diagdds)  #, fitType='local')
 res_IBK = results(diagdds)
 res_IBK = res_IBK[order(res_IBK$padj, na.last = NA), ]
 alpha = 0.05
-keepOTUs25_p34 = rownames(res_IBK[res_IBK$padj > alpha, ])[1:25]
+keepOTUs25_p34 = rownames(res_IBK[res_IBK$padj < alpha, ])[1:25]
 kosticTrimvs25_IBK_p34 = prune_taxa(keepOTUs25_p34, norm_IBK)
 kosticTrimvs25_IBK_p34
 #View(kosticTrimvs_IBK)
-save(kosticTrimvs25_IBK_p34, file = "kosticTrimvs25_p34.rds")
+#save(kosticTrimvs25_IBK_p34, file = "kosticTrimvs25_p34.rds")
 #load("kosticTrimvs_p34.rds")
-write.table(otu_table(kosticTrimvs25_IBK_p34), "kosticTrimvs25_IBK_p34.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+#write.table(otu_table(kosticTrimvs25_IBK_p34), "kosticTrimvs25_IBK_p34.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
 plot_heatmap(kosticTrimvs25_IBK_p34, sample.label = "Time", sample.order = "Time", taxa.order= "Phylum", taxa.label = "Family")
-```
-#top 50 unique diff asvs merged from time periods 1-4
-```{r ,echo= True}
-diff_asvs_between_time <- c("ASV_1008","ASV_1013","ASV_1020","ASV_1029","ASV_1045","ASV_1049","ASV_1056","ASV_1063","ASV_1074","ASV_1081","ASV_1083","ASV_1096","ASV_110","ASV_1107","ASV_1113","ASV_1117","ASV_112","ASV_1124","ASV_1128","ASV_1139","ASV_1148","ASV_1158","ASV_116","ASV_1169","ASV_117","ASV_1170","ASV_1174","ASV_1198","ASV_1206","ASV_1217","ASV_1218","ASV_1232","ASV_1234","ASV_1249","ASV_1255","ASV_126","ASV_1267","ASV_1292","ASV_13","ASV_1305","ASV_1308","ASV_1313","ASV_132","ASV_1320","ASV_133","ASV_1332","ASV_134","ASV_1342","ASV_1344","ASV_1347","ASV_1356","ASV_1357","ASV_1361","ASV_1377","ASV_1390","ASV_14","ASV_140","ASV_141","ASV_1420","ASV_144","ASV_1448","ASV_145","ASV_1452","ASV_15","ASV_150","ASV_1506","ASV_1526","ASV_1552","ASV_1569","ASV_157","ASV_159","ASV_160","ASV_164","ASV_1641","ASV_167","ASV_168","ASV_169","ASV_170","ASV_171","ASV_174","ASV_1779","ASV_178","ASV_179","ASV_1792","ASV_182","ASV_190","ASV_2","ASV_207","ASV_21","ASV_22","ASV_225","ASV_226","ASV_231","ASV_245","ASV_246","ASV_248","ASV_259","ASV_261","ASV_266","ASV_27","ASV_270","ASV_275","ASV_285","ASV_286","ASV_289","ASV_29","ASV_298","ASV_301","ASV_305","ASV_309","ASV_312","ASV_315","ASV_319","ASV_322","ASV_324","ASV_327","ASV_333","ASV_339","ASV_340","ASV_343","ASV_350","ASV_354","ASV_362","ASV_37","ASV_374","ASV_386","ASV_398","ASV_403","ASV_404","ASV_405","ASV_409","ASV_413","ASV_418","ASV_419","ASV_423","ASV_424","ASV_426","ASV_427","ASV_449","ASV_452","ASV_453","ASV_454","ASV_456","ASV_458","ASV_46","ASV_462","ASV_47","ASV_474","ASV_476","ASV_485","ASV_49","ASV_492","ASV_503","ASV_511","ASV_52","ASV_520","ASV_523","ASV_526","ASV_527","ASV_529","ASV_544","ASV_545","ASV_559","ASV_562","ASV_565","ASV_572","ASV_577","ASV_58","ASV_584","ASV_587","ASV_59","ASV_593","ASV_60","ASV_600","ASV_603","ASV_612","ASV_615","ASV_617","ASV_618","ASV_623","ASV_625","ASV_641","ASV_645","ASV_6","ASV_650","ASV_655","ASV_658","ASV_659","ASV_660","ASV_661","ASV_670","ASV_680","ASV_681","ASV_683","ASV_69","ASV_695","ASV_697","ASV_11","ASV_734","ASV_739","ASV_74","ASV_741","ASV_743","ASV_745","ASV_749","ASV_754","ASV_765","ASV_771","ASV_773","ASV_774","ASV_775","ASV_776","ASV_78","ASV_783","ASV_784","ASV_785","ASV_787","ASV_79","ASV_792","ASV_793","ASV_799","ASV_803","ASV_816","ASV_817","ASV_818","ASV_827","ASV_829","ASV_834","ASV_846","ASV_847","ASV_853","ASV_86","ASV_863","ASV_864","ASV_866","ASV_867","ASV_874","ASV_88","ASV_881","ASV_882","ASV_883","ASV_899","ASV_9","ASV_900","ASV_904","ASV_907","ASV_912","ASV_915","ASV_919","ASV_928","ASV_929","ASV_930","ASV_935","ASV_94","ASV_943","ASV_951","ASV_961","ASV_963","ASV_985", "ASV_999")
-allTaxa_IBK_diff_period <- taxa_names(norm_IBK)
-allTaxa1_IBK_diff_period  <- allTaxa_IBK_diff_period [(allTaxa_IBK_diff_period %in% diff_asvs_between_time)]
-IBK_diff_period  <- prune_taxa(allTaxa1_IBK_diff_period, norm_IBK)
-taxa_names(IBK_diff_period )
-save(IBK_diff_period , file = "IBK_diff_period.rds")
-#load("IBK_diff_period .rds")
-plot_heatmap(IBK_diff_period, sample.label = "Time", sample.order = "Time", taxa.order= "Phylum", taxa.label = "Family")
-
 ```
 
 #top 25 unique diff asvs merged from time periods 1-4
 ```{r ,echo= True}
-diff_asvs_between_time25 <- c("ASV_1008","ASV_1013","ASV_1020","ASV_1029","ASV_1045","ASV_1049","ASV_1081","ASV_1083","ASV_1096","ASV_110","ASV_1107","ASV_112","ASV_1158","ASV_1169","ASV_1174","ASV_1198","ASV_1218","ASV_1255","ASV_126","ASV_1292","ASV_13","ASV_1308","ASV_1320","ASV_133","ASV_1332","ASV_1356","ASV_1357","ASV_1361","ASV_1390","ASV_1448","ASV_145","ASV_1452","ASV_150","ASV_1506","ASV_1552","ASV_160","ASV_164","ASV_167","ASV_168","ASV_169","ASV_170","ASV_174","ASV_178","ASV_1792","ASV_182","ASV_2","ASV_207","ASV_21","ASV_22","ASV_225","ASV_245","ASV_246","ASV_248","ASV_261","ASV_266","ASV_27","ASV_275","ASV_285","ASV_286","ASV_29","ASV_301","ASV_305","ASV_315","ASV_324","ASV_354","ASV_37","ASV_386","ASV_398","ASV_403","ASV_413","ASV_418","ASV_419","ASV_427","ASV_449","ASV_453","ASV_458","ASV_47","ASV_474","ASV_476","ASV_485","ASV_492","ASV_52","ASV_520","ASV_523","ASV_526","ASV_527","ASV_559","ASV_562","ASV_565","ASV_572","ASV_577","ASV_58","ASV_584","ASV_587","ASV_59","ASV_593","ASV_65","ASV_617","ASV_618","ASV_655","ASV_659","ASV_660","ASV_661","ASV_681","ASV_69","ASV_695","ASV_697","ASV_711","ASV_739","ASV_74","ASV_741","ASV_743","ASV_754","ASV_765","ASV_771","ASV_773","ASV_774","ASV_776","ASV_784","ASV_785","ASV_787","ASV_792","ASV_803","ASV_817","ASV_829","ASV_847","ASV_853","ASV_86","ASV_863","ASV_874","ASV_88","ASV_881","ASV_882","ASV_883","ASV_904","ASV_907","ASV_915","ASV_94","ASV_961","ASV_999")
+diff_asvs_between_time25 <- c(keepOTUs25_p12, keepOTUs25_p13, keepOTUs25_p14, keepOTUs25_p23, keepOTUs25_p24, keepOTUs25_p34)
 allTaxa_IBK_diff_period25 <- taxa_names(norm_IBK)
-allTaxa1_IBK_diff_period25  <- allTaxa_IBK_diff_period [(allTaxa_IBK_diff_period25 %in% diff_asvs_between_time25)]
+allTaxa1_IBK_diff_period25  <- allTaxa_IBK_diff_period25[(allTaxa_IBK_diff_period25 %in% diff_asvs_between_time25)]
 IBK_diff_period25  <- prune_taxa(allTaxa1_IBK_diff_period25, norm_IBK)
 taxa_names(IBK_diff_period25 )
-save(IBK_diff_period25 , file = "IBK_diff_period25.rds")
-load("IBK_diff_period25.rds")
+#save(IBK_diff_period25 , file = "IBK_diff_period25.rds")
+#load("IBK_diff_period25.rds")
 
 plot_heatmap(IBK_diff_period25, sample.label = "Time", sample.order = "Time", taxa.order= "Phylum", taxa.label = "Order")
 
@@ -1269,8 +1266,8 @@ dim(IBK_df_t)
 head(IBK_df_t[, 1:20])
 #View(IBK_df_t)
 
-#write.table(otu_table(IBK_diff_period25), "test_pheatmap.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
-write.table(tax_table(IBK_diff_period25), file = "diff_taxa.txt", sep = "\t", quote = F, row.names = T, col.names = NA)
+write.table(otu_table(IBK_diff_period25), "test_pheatmap.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+write.table(tax_table(IBK_diff_period25), file = "diff_taxa2.txt", sep = "\t", quote = F, row.names = T, col.names = NA)
 ibk_pheatmap <- read.table("test_pheatmap.txt",  sep = "\t", header = T, quote = "", stringsAsFactors = F, row.names = 1, check.names = F)
 ibk_pheatmap1 <- as.data.frame(t(ibk_pheatmap))
 dim(ibk_pheatmap1)
