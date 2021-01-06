@@ -1,0 +1,2316 @@
+---
+title: "IBK_Bartenslager_et_al_Y1"
+author: "Alison Bartenslager"
+date: "8/17/2020"
+output: html_document
+---
+
+###trimming at Q30 (IBK_animal_microbiome_Y1)
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#loading packages in
+```{r ,echo=TRUE}
+library("import")
+library("knitr")
+library("BiocStyle")
+library("ggplot2")
+library("gridExtra")
+library("dada2")
+library("phyloseq")
+library("DECIPHER")
+library("ape")
+library("phangorn")
+library("knitr")
+library("BiocStyle")
+library("ShortRead")
+library("BiocManager")
+
+```
+
+#loading packages
+```{r ,echo=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+library("knitr")
+library("BiocStyle")
+.cran_packages <- c("ggplot2", "gridExtra")
+.bioc_packages <- c("dada2", "phyloseq", "DECIPHER", "phangorn")
+.inst <- .cran_packages %in% installed.packages()
+if(any(!.inst)) {
+   install.packages(.cran_packages[!.inst])
+}
+.inst <- .bioc_packages %in% installed.packages()
+if(any(!.inst)) {
+   source("http://bioconductor.org/biocLite.R")
+   biocLite(.bioc_packages[!.inst], ask = F)
+}
+# Load packages into session, and print package version
+sapply(c(.cran_packages, .bioc_packages), require, character.only = TRUE)
+```
+
+##having to run two seperate groups (450 + 450 fastq files due to size & computer memory. Will merge together in later step)
+```{r ,echo=TRUE}
+fastq_files= "run_q_check"
+list.files(fastq_files)
+```
+
+#filtering and trimming
+```{r ,echo=TRUE}
+fnFs <- sort(list.files(fastq_files, pattern="_R1_001.fastq.gz"))
+fnRs <- sort(list.files(fastq_files, pattern="_R2_001.fastq.gz"))
+# Extract sample names, assuming filenames have format: SAMPLENAME_XXX.fastq
+sampleNames <- sapply(strsplit(fnFs, "_"), `[`, 1)
+# Specify the full path to the fnFs and fnRs
+fnFs <- file.path(fastq_files, fnFs)
+fnRs <- file.path(fastq_files, fnRs)
+# Extract sample names, assuming filenames have format: SAMPLENAME_XXX.fastq
+sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 1)
+fnFs[1:3]
+fnRs[1:3]
+```
+
+#quality plot (foward)
+```{r ,echo=TRUE}
+plotQualityProfile(fnFs[1:10])
+#can change to view more than two plots at a time
+```
+
+#quality plot (reverse)
+```{r ,echo=TRUE}
+#The first two reverse reads:
+plotQualityProfile(fnRs[1:5])
+```
+
+#trimming and filtering the F/R reads
+```{r ,echo=TRUE}
+filt_path <- file.path(fastq_files, "filtered") 
+if(!file_test("-d", filt_path)) dir.create(filt_path)
+filtFs <- file.path(filt_path, paste0(sampleNames, "_F_filt.fastq.gz"))
+filtRs <- file.path(filt_path, paste0(sampleNames, "_R_filt.fastq.gz"))
+
+#filting the forward and reverse reads
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen=c(235,175),
+                    maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE,
+                  compress=TRUE, multithread=TRUE)
+out
+```
+
+```{r ,echo=TRUE}
+saveRDS(out, "out.RDS")
+write.table(out, file="out.txt", col.names=T, row.names=T, sep = "\t",quote=F)
+```
+
+#Data Statistics after Trimming
+```{r ,echo=TRUE}
+sum(out[,1]) #total reads in 12928949
+sum(out[,2]) #total reads out 11768828
+sum(out[,1]) - sum(out[,2]) #reads lost 1160121
+sum(out[,2])/sum(out[,1]) # percentage data retained 91%
+```
+
+
+#first set
+#Dereplication/error plots
+```{r ,echo=TRUE}
+#to avoid error, due to very low reads
+exists <- file.exists(filtFs) & file.exists(filtRs)
+filtFs <- filtFs[exists]
+filtRs <- filtRs[exists]
+#Dereplication
+derepFs <- derepFastq(filtFs, verbose=TRUE)
+derepRs <- derepFastq(filtRs, verbose=TRUE)
+# Name the derep-class objects by the sample names
+names(derepFs) <- sampleNames
+names(derepRs) <- sampleNames
+
+errF <- learnErrors(filtFs, multithread=TRUE)
+
+errR <- learnErrors(filtRs, multithread=TRUE)
+
+
+plotErrors(errF)
+plotErrors(errR)
+
+
+save(exists, filtFs, filtRs, derepFs, derepRs, errF, errR, file = "runq30.rds")
+```
+
+
+```{r ,echo=TRUE}
+dadaFs <- dada(derepFs, err=errF, multithread=TRUE)
+
+dadaRs <- dada(derepRs, err=errR, multithread=TRUE)
+
+dadaFs[[1]]
+```
+
+#Construct sequence table and remove chimeras
+```{r ,echo=TRUE}
+mergers <- mergePairs(dadaFs, derepFs, dadaRs, derepRs, verbose=T)
+head(mergers[[1]])
+```
+
+```{r ,echo=TRUE}
+seqtabAll <- makeSequenceTable(mergers)
+dim(seqtabAll)
+table(nchar(getSequences(seqtabAll)))
+write.table(seqtabAll, file="seqtabAll.txt", col.names=T, row.names=T, sep = "\t",quote=F)
+
+seqtabNoC <- removeBimeraDenovo(seqtabAll)
+write.table(seqtabNoC, file="seqtabNoC.txt", col.names=NA, row.names=T, sep = "\t",quote=F)
+
+saveRDS(seqtabNoC, "SEQTAB_nOc.RDS")
+SEQTAB <- readRDS("SEQTAB_nOc.RDS")
+dim(SEQTAB)
+dim(seqtabNoC) #7544 450
+t_seqtabNoC= t(seqtabNoC)
+dim(t_seqtabNoC)
+table(nchar(getSequences(SEQTAB)))
+```
+
+#q30 second half of dataset 
+```{r ,echo=TRUE}
+fastq_files1= "run_q_check2"
+list.files(fastq_files1)
+```
+#filtering and trimming
+```{r ,echo=TRUE}
+fnFs1 <- sort(list.files(fastq_files1, pattern="_R1_001.fastq.gz"))
+fnRs1 <- sort(list.files(fastq_files1, pattern="_R2_001.fastq.gz"))
+# Extract sample names, assuming filenames have format: SAMPLENAME_XXX.fastq
+sampleNames1 <- sapply(strsplit(fnFs1, "_"), `[`, 1)
+# Specify the full path to the fnFs and fnRs
+fnFs1 <- file.path(fastq_files1, fnFs1)
+fnRs1 <- file.path(fastq_files1, fnRs1)
+# Extract sample names, assuming filenames have format: SAMPLENAME_XXX.fastq
+sample.names1 <- sapply(strsplit(basename(fnFs1), "_"), `[`, 1)
+fnFs1[1:3]
+fnRs1[1:3]
+```
+#quality plot (foward)
+```{r ,echo=TRUE}
+plotQualityProfile(fnFs1[1:10])
+#can change to view more than two plots at a time
+```
+
+#quality plot (reverse)
+```{r ,echo=TRUE}
+#The first two reverse reads:
+plotQualityProfile(fnRs1[1:5])
+```
+#trimming and filtering the F/R reads
+```{r ,echo=TRUE}
+filt_path1 <- file.path(fastq_files1, "filtered") 
+if(!file_test("-d", filt_path1)) dir.create(filt_path1)
+filtFs1 <- file.path(filt_path1, paste0(sampleNames1, "_F_filt.fastq.gz"))
+filtRs1 <- file.path(filt_path1, paste0(sampleNames1, "_R_filt.fastq.gz"))
+
+#filting the forward and reverse reads
+out1 <- filterAndTrim(fnFs1, filtFs1, fnRs1, filtRs1, truncLen=c(235,175),
+                    maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE,
+                  compress=TRUE, multithread=TRUE)
+out1
+
+saveRDS(out1, "out1.RDS")
+write.table(out1, file="out1.txt", col.names=T, row.names=T, sep = "\t",quote=F)
+```
+
+#Data Statistics after Trimming
+```{r ,echo=TRUE}
+sum(out1[,1]) #total reads in #16003289
+sum(out1[,2]) #total reads out #1382225
+sum(out1[,1]) - sum(out1[,2]) #reads lost #2081064
+sum(out1[,2])/sum(out1[,1]) # percentage data retained #86.9%
+```
+
+
+#second set
+#Dereplication/error plots
+```{r ,echo=TRUE}
+#to avoid error, due to very low reads
+exists1 <- file.exists(filtFs1) & file.exists(filtRs1)
+filtFs1 <- filtFs1[exists1]
+filtRs1 <- filtRs1[exists1]
+#Dereplication
+derepFs1 <- derepFastq(filtFs1, verbose=TRUE)
+derepRs1 <- derepFastq(filtRs1, verbose=TRUE)
+# Name the derep-class objects by the sample names
+names(derepFs1) <- sampleNames1
+names(derepRs1) <- sampleNames1
+
+errF1 <- learnErrors(filtFs1, multithread=TRUE)
+
+errR1 <- learnErrors(filtRs1, multithread=TRUE)
+
+
+plotErrors(errF1)
+plotErrors(errR1)
+save(exists1, filtFs1, filtRs1, derepFs1, derepRs1, errF1, errR1, file = "runq301.rds")
+load("run301.rds")
+```
+
+
+```{r ,echo=TRUE}
+dadaFs1 <- dada(derepFs1, err=errF1, multithread=TRUE)
+
+dadaRs1 <- dada(derepRs1, err=errR1, multithread=TRUE)
+
+dadaFs1[[1]]
+```
+
+#Construct sequence table and remove chimeras
+```{r ,echo=TRUE}
+mergers1 <- mergePairs(dadaFs1, derepFs1, dadaRs1, derepRs1, verbose=T)
+head(mergers1[[1]])
+```
+
+```{r ,echo=TRUE}
+seqtabAll1 <- makeSequenceTable(mergers1)
+dim(seqtabAll1)
+table(nchar(getSequences(seqtabAll1)))
+write.table(seqtabAll1, file="seqtabAll1.txt", col.names=T, row.names=T, sep = "\t",quote=F)
+
+seqtabNoC1 <- removeBimeraDenovo(seqtabAll1)
+write.table(seqtabNoC1, file="seqtabNoC1.txt", col.names=NA, row.names=T, sep = "\t",quote=F)
+
+saveRDS(seqtabNoC1, "SEQTAB_nOc1.RDS")
+seqtabNoC1 <- readRDS("SEQTAB_nOc1.RDS")
+dim(seqtabNoC1) #456 12050
+```
+
+#mergining seqtab files to make into one object
+```{r ,echo=TRUE}
+readRDS("SEQTAB_nOc.RDS")
+run1 <- readRDS("SEQTAB_nOc.RDS")
+
+merged_seq_table <- mergeSequenceTables(run1,seqtabNoC1)
+
+
+saveRDS(merged_seq_table, "merged_seq_table.RDS")
+merged_seq_table <- readRDS("merged_seq_table.RDS")
+merged_seq_table <- t(merged_seq_table)
+
+dim(run1) #450 7544
+dim(seqtabNoC1) #456 12050
+dim(merged_seq_table) # 15948 906
+#write.table(merged_seq_table, file="test.txt", col.names=NA, row.names=T, sep = "\t",quote=F)
+```
+
+#Assigning Taxonomy 
+```{r ,echo=TRUE}
+fastaRef= "./silva_nr_v138_train_set.fa"
+taxTab <- assignTaxonomy(merged_seq_table, refFasta = fastaRef, multithread=TRUE)
+saveRDS(taxTab, "taxTab.RDS")
+readRDS("taxTab.RDS")
+taxTab <- readRDS("taxTab.RDS")
+
+taxTa <- addSpecies(taxTab, "silva_species_assignment_v138.fa", verbose=TRUE)
+#494 assigned at species level
+saveRDS(taxTa, "taxTa.RDS")
+taxTa <- readRDS("taxTa.RDS")
+write.table(taxTa, file="Analysis_NewMethod2/taxTa_species.txt", col.names=T, row.names=T, sep = "\t")
+
+```
+
+#Extracting the standard goods from R
+```{r ,echo=TRUE}
+ # giving our seq headers more manageable names (ASV_1, ASV_2...)
+asv_seqs <- colnames(merged_seq_table)
+asv_headers <- vector(dim(merged_seq_table)[2], mode="character")
+
+for (i in 1:dim(merged_seq_table)[2]) {
+  asv_headers[i] <- paste(">ASV", i, sep="_")
+}
+
+  # making and writing out a fasta of our final ASV seqs:
+asv_fasta <- c(rbind(asv_headers, asv_seqs))
+write(asv_fasta, "Analysis_NewMethod2/ASVs.fa")
+
+  # count table:
+asv_tab <- t(merged_seq_table)
+row.names(asv_tab) <- sub(">", "", asv_headers)
+write.table(asv_tab, "Analysis_NewMethod2/ASVs_counts.txt", sep="\t", quote=F)
+
+ # tax table:
+asv_tax <- taxTab
+row.names(asv_tax) <- sub(">", "", asv_headers)
+write.table(asv_tax, "Analysis_NewMethod2/ASVs_taxonomy.txt", sep="\t", quote=F)
+
+
+```
+
+
+#bring mapping file in
+```{r ,echo=TRUE}
+mappingfile_IBKY1 <- read.table("mappingfile_IBK.txt", sep = "\t", header = T)
+View(mappingfile_IBKY1)
+```
+
+########this is done from the command line#######
+#how to make tree in mothur 
+download mothur from www.mothur.org/wiki
+mv ~/Downloads/Mothur ~/
+#unzip using
+tar command
+#make sure you have wget downloaded using homebrew
+#use wget to get silva-- 
+wget http://www.mothur.org/w/images/3/32/Silva.nr_v132.tgz
+#unzip- 
+tar -zxvf Silva.nr_v132.tgz
+#call mothur then you can start aligning
+pcr.seqs(fasta=silva.nr_v138.align, start=11894, end=25319, keepdots=F, procesors=8) 
+#Output is renamed!
+
+#next rename silva (mothur)
+system(mv silva.nr_v138.pcr.align silva.v4.fasta)
+
+#align (mothur)
+align.seqs(fasta=ASVs08202020.fa, reference=silva.v4.fasta) 
+
+#after aligning must make each ASV have a minimum of 10 characters (from command line)
+sed -i -e 's/>/>AAAAAAAAAA/g' mothur/ASVs08202020.align
+#also doesnt like ..... must take out from command line
+sed -i -e 's/\./-/g' mothur/ASVs08202020.align
+#create distances (mothur)
+dist.seqs(fasta=ASVs08202020.align, processors=2, cutoff=.10, output=phylip)
+(will have a new output)
+#last step. finalize tree (mothur)
+clearcut(phylip=/Users/alisonbartenslager/mothur/ASVs08202020.phylip.dist) 
+(will take awhile)
+#change ASV back (command line)
+sed -i -e 's/AAAAAAAAAA//g' mothur/ASVs08202020.phylip.tre
+#move finalized tree back to R working directory before proceeding (command line)
+mv ~/mothur/ASVs08202020.phylip.tre /Users/alisonbartenslager/Desktop/IBK_animal_microbiome_08172020
+
+#read mapping file/ bring phyloseq tree in (use above to see how to generate tree from mothur)
+```{r ,echo=TRUE}
+View(mappingfile_IBKY1)
+row.names(mappingfile_IBKY1) = mappingfile_IBKY1$Sample_ID
+#View(mapping_file)
+
+rownames(mappingfile_IBKY1) = mappingfile_IBKY1$Sample_ID
+
+
+taxTa <- read.table("taxTa_species.txt",  sep = "\t", header = T, quote = "", stringsAsFactors = F, row.names = 1)
+#col.names = NA
+taxTaA <- as.matrix(taxTa)
+
+#Mapping file is read in with "sa" in front of sample id. Thus, you have to paste a "sa" in front of the sample id on the otu table in order for everything to be identical and match
+ps1 <- phyloseq(otu_table(merged_seq_table, taxa_are_rows = FALSE))
+sample_names(ps1) <- paste("sa", sample_names(ps1), sep = "")
+ps2 <- merge_phyloseq(ps1, sample_data(mappingfile_IBKY1))
+ps3 <- merge_phyloseq(ps2, tax_table(taxTaA))
+
+
+taxa_names(ps3) <- paste0("ASV_", seq(ntaxa(ps3))) #this command is used when wanting to name ASV so that you have ASV_1 rather than a sequence ID. Can do at a later step
+
+
+
+row.names(mappingfile_IBKY1) <- as.character(mappingfile_IBKY1[, 1])
+
+
+#import tree from mothur
+
+tree_file <- 'ASVs08202020.phylip.tre'
+phylo_tree <- read_tree(tree_file)
+
+taxa_names(ps3) <- paste0("ASV_", seq(ntaxa(ps3)))
+
+ps_IBKY1 <- merge_phyloseq(ps3, phy_tree(phylo_tree))
+
+
+save(ps_IBKY1, file = "ps_IBKY1.rds")
+load("ps_IBKY1.rds")
+```
+
+#decontaminating for sequencing contaminates
+```{r ,echo=TRUE}
+#BiocManager::install("decontam")
+library(decontam)
+
+View(ps_IBKY1)
+head(sample_data(ps_IBKY1))
+
+sample_data(ps_IBKY1)$is.neg <- sample_data(ps_IBKY1)$Type == "neg_control"
+contamdf.prev <- isContaminant(ps_IBKY1, method="prevalence", neg="is.neg", batch = sample_data(ps_IBKY1)$Run, batch.combine = "minimum")
+table(contamdf.prev$contaminant)
+#View(contamdf.prev)
+
+#keeping the contaminants (will be later used to filter the contaminants from object)
+removal_asv <- which(contamdf.prev$contaminant)
+removal_done <- paste0("ASV_", removal_asv)
+ps_removal_done <- prune_taxa(removal_done, ps_IBKY1)
+taxa_names(ps_IBKY1)
+ps_removal_done
+
+
+#removal of the contaminants 
+large_keep <- taxa_names(ps_IBKY1)
+good_large_taxa <- large_keep[!(large_keep %in% removal_done)]
+good_large_taxa
+ps_no_contamination <- prune_taxa(good_large_taxa, ps_IBKY1)
+ps_no_contamination
+save(ps_no_contamination, file = "ps_no_contamination.rds")
+load("ps_no_contamination.rds")
+```
+
+#filtering out Eukaryota
+```{r ,echo=TRUE}
+remove_kingdoms <- c( "Archaea", "Eukaryota")
+ps_filtered_pinkeye <- subset_taxa(ps_IBKY1, !Kingdom %in% remove_kingdoms)
+taxa_names(ps_filtered_pinkeye)
+
+write.table(otu_table(ps_filtered_pinkeye, taxa_are_rows = FALSE), "removal_Eukaryota_ASVs_pinkeye.txt", sep = "\t", col.names = NA, row.names = TRUE, quote = FALSE)
+
+save(ps_filtered_pinkeye, file = "ps_filtered_eukaryota_pinkeye.rds")
+#load("ps_filtered_eurkaryota_pinkeye.rds")
+```
+
+#filtering out neg controls
+```{r ,echo=TRUE}
+ps_pinkeye_neg <- subset_samples(ps_filtered_pinkeye, Animal_ID != "NEG_CON")
+ps_pinkeye_neg
+
+save(ps_pinkeye_neg, file = "ps_pinkeye_neg.rds")
+#load("ps_pinkeye_neg.rds")
+```
+
+#filtering out cow samples that were not on trial and samples below 3,000 reads
+```{r ,echo=TRUE}
+min <- min(sample_sums(ps_pinkeye_neg))
+reads_per_sample1 <- data.frame(Reads = sample_sums(ps_pinkeye_neg))
+reads_per_sample1$Sample_ID <- rownames(reads_per_sample1)
+fil= c("sa484", "sa505", "sa865", "sa877", "sa863", "sa528", "sa889", "sa791", "sa874", "sa875", "sa128", "sa848", "sa134", "sa882", "sa887", "sa870", "sa133", "sa873", "sa895", "sa880", "sa866", "sa892", "sa893", "sa79", "sa885", "sa766", "sa136", "sa160", "sa121") 
+
+ps_pinkeye_analyze= prune_samples(!(sample_names(ps_pinkeye_neg) %in% fil), ps_pinkeye_neg)
+ps_pinkeye_analyze
+min2 <- min(sample_sums(ps_pinkeye_analyze))
+reads_per_sample2 <- data.frame(Reads = sample_sums(ps_pinkeye_analyze))
+reads_per_sample2$Sample_ID <- rownames(reads_per_sample2)
+#View(reads_per_sample2)
+save(ps_pinkeye_analyze, file= "ps_pinkeye_analyze.rds")
+load("ps_pinkeye_analyze.rds")
+```
+
+#prevalance of each ASV Anything less than 1 is removed
+```{r ,echo=TRUE}
+prevdf_ps= apply(X = otu_table(ps_pinkeye_analyze), 
+                       MARGIN = ifelse(taxa_are_rows(ps_pinkeye_analyze), yes = 1, no = 2), 
+                       FUN = function(x){sum(x > 0)})
+prevdf_ps <- data.frame(Prevalence= prevdf_ps, TotalAbundance=taxa_sums(ps_pinkeye_analyze))
+#View(prevdf_ps)
+
+ps_IBK_run <- rownames(prevdf_ps)[prevdf_ps$Prevalence > 1]
+ps_IBK_run
+
+ps_IBK_analyze <- prune_taxa(ps_IBK_run, ps_pinkeye_analyze)
+ps_IBK_analyze
+sum(otu_table(ps_IBK_analyze))/sum(otu_table(ps_pinkeye_analyze)) #99.58% those reads
+save(ps_IBK_analyze, file = "ps_IBK_analyze.rds")
+load("ps_IBK_analyze.rds")
+sum(otu_table(ps_IBK_analyze)) #total reads retained 96% from 23,647,648 reads
+```
+
+#Normalize Data set (proportion)
+```{r ,echo=TRUE}
+norm_IBK  <-  transform_sample_counts(ps_IBK_analyze, function(x) x / sum(x) )
+save(norm_IBK, file= "norm_IBK.rds")
+load("norm_IBK.rds")
+```
+
+#rarefy/alpha 
+```{r ,echo=TRUE}
+
+#rarefraction curve
+library("vegan")
+rarecurve((otu_table(ps_IBK_analyze)), step=50, cex=0.5)
+
+ps_rarefy <- rarefy_even_depth(ps_IBK_analyze, sample.size = min(sample_sums(ps_IBK_analyze)),
+  rngseed = T, replace = TRUE, trimOTUs = TRUE, verbose = TRUE)
+Chao1_obser_rarefy= estimate_richness(ps_rarefy, split = TRUE, measures = c("Chao1"))
+head(Chao1_obser_rarefy)
+sample_sums(ps_rarefy)
+obser_rarefy= estimate_richness(ps_rarefy, split = TRUE, measures = c("Observed"))
+head(obser_rarefy)
+
+Chao1_obser_rarefy_metadata= merge(mappingfile_IBKY1,Chao1_obser_rarefy, by= "row.names")
+head(Chao1_obser_rarefy_metadata)
+
+#rarefy with t test
+library("ggpubr")
+library("tidyverse")
+alpha_meas = c("Observed", "Chao1")
+(p <- plot_richness(ps_rarefy, "Time", measures=alpha_meas))
+
+test <- (p + geom_boxplot(data=p$data, aes(x=Time, y=value, color=NULL), alpha=0.05)) 
+
+
+#making a pdf version
+pdf("Figure1_updated.pdf")
+plot(test)
+dev.off()
+
+#running a wilcox t test
+observed_pairwise <- pairwise.wilcox.test(obser_rarefy$Observed, sample_data(ps_rarefy)$Time)
+chao1_pairwise <- pairwise.wilcox.test(Chao1_obser_rarefy$Chao1, sample_data(ps_rarefy)$Time)
+
+```
+
+
+#PCoA weighted
+```{r ,echo=TRUE}
+
+ord.nmds.pcoa <- ordinate(norm_IBK, method="PCoA", distance="wunifrac")
+beta <-plot_ordination(norm_IBK, ord.nmds.pcoa, color = "Time") 
+
+#creating a pdf version
+pdf("beta.pdf")
+plot(beta)
+dev.off()
+
+```
+
+#pairwise permanova 
+```{r ,echo=TRUE}
+library(vegan)
+#IBK positive cattle (during trial)
+metadata <- as(sample_data(ps_pinkeye_positive5), "data.frame")
+
+
+adonis(phyloseq::distance(ps_pinkeye_positive5, method="wunifrac") ~ Ulcer_positive + Treatment + Time + Hide + Sex + Breed,
+       data = metadata)
+
+#entire data set
+
+metadata_1 <- as(sample_data(norm_IBK), "data.frame")
+
+adonis(phyloseq::distance(norm_IBK, method="wunifrac") ~  Time:Eye_sampled + Treatment + Time + Hide + Sex + Breed + Eye_sampled, data = metadata_1)
+
+```
+
+
+#pairwise permanova based on treatment (NOT INCLUDED IN MANUSCRIPT)
+```{r ,echo=TRUE}
+library(vegan)
+#Placebo
+#View(mappingfile_IBKY1)
+norm_IBK_placebo <- subset_samples(norm_IBK, Treatment == "PLACEBO")
+metadata <- as(sample_data(norm_IBK_placebo), "data.frame")
+
+adonis(phyloseq::distance(norm_IBK_placebo, method="wunifrac") ~ Time + Hide + Sex + Breed + Days_from_birth + Ulcer_positive,
+       data = metadata)
+
+#Commercial 
+norm_IBK_commercial <- subset_samples(norm_IBK, Treatment == "COMMERCIAL")
+metadata <- as(sample_data(norm_IBK_commercial), "data.frame")
+
+adonis(phyloseq::distance(norm_IBK_commercial, method="wunifrac") ~ Time + Hide + Sex + Breed + Days_from_birth + Ulcer_positive,
+       data = metadata)
+
+#Autogenous
+norm_IBK_autogenous <- subset_samples(norm_IBK, Treatment == "AUTOGENOUS")
+metadata <- as(sample_data(norm_IBK_autogenous), "data.frame")
+
+adonis(phyloseq::distance(norm_IBK_autogenous, method="wunifrac") ~ Time + Hide + Sex + Breed + Days_from_birth + Ulcer_positive,
+       data = metadata)
+
+```
+
+
+#making core for entire data set (ASVs must be present in at least 80% of all samples) 
+```{r ,echo=TRUE}
+
+#with non normalized object
+
+prevdf_ps_IBK_ana_orig= apply(X = otu_table(ps_IBK_analyze), 
+                       MARGIN = ifelse(taxa_are_rows(ps_IBK_analyze), yes = 1, no = 2), 
+                       FUN = function(x){sum(x > 0)})
+prevdf_ps_IBK_ana_orig <- data.frame(Prevalence=prevdf_ps_IBK_ana_orig, TotalAbundance=taxa_sums(ps_IBK_analyze))
+#View(prevdf_ps_IBK_ana_orig)
+
+
+core_ps_ana_orig <- rownames(prevdf_ps_IBK_ana_orig)[prevdf_ps_IBK_ana_orig$Prevalence >=711 ]
+core_ps_ana_orig
+
+#main core ASVs filtering from normalized data set
+name <- c("ASV_2", "ASV_1", "ASV_3")
+name_run <- taxa_names(norm_IBK)
+name_run_1 <- name_run[(name_run %in% name)]
+core_1 <- prune_taxa(name_run_1, norm_IBK)
+taxa_names(core_1)
+sum(otu_table(core_1))/sum(otu_table(norm_IBK)) ###80% of total reads
+save(core_1, file = "core_entire_set.rds")
+#load("core_entire_set.rds")
+write.table(otu_table(core_1), "core_1.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+
+```
+
+#making core (time) ##Set criteria of 75% 
+```{r ,echo=TRUE}
+
+#Period 1
+ps_period1 <- subset_samples(ps_IBK_analyze, Date_swabbed == "5_16_18")
+ps_period1
+
+prevdf_ps_period1= apply(X = otu_table(ps_period1), 
+                       MARGIN = ifelse(taxa_are_rows(ps_period1), yes = 1, no = 2), 
+                       FUN = function(x){sum(x > 0)})
+prevdf_ps_period1 <- data.frame(Prevalence= prevdf_ps_period1, TotalAbundance=taxa_sums(ps_period1))
+#View(prevdf_ps_period1)
+
+core_ps_period1 <- rownames(prevdf_ps_period1)[prevdf_ps_period1$Prevalence >= 165]
+core_ps_period1 #29 ASV
+
+ps_core_period1 <- prune_taxa(core_ps_period1, norm_IBK)
+ps_core_period1
+sum(otu_table(ps_core_period1))/sum(otu_table(norm_IBK)) #37.8% those ASVs count for this % of total reads
+save(ps_core_period1, file = "ps_core_period1.rds")
+#load("ps_core_period1.rds")
+#Period2
+ps_IBK_analyze
+ps_period2 <- subset_samples(ps_IBK_analyze, Date_swabbed == "6_6_18")
+ps_period2
+
+
+prevdf_ps_period2= apply(X = otu_table(ps_period2), 
+                       MARGIN = ifelse(taxa_are_rows(ps_period2), yes = 1, no = 2), 
+                       FUN = function(x){sum(x > 0)})
+prevdf_ps_period2 <- data.frame(Prevalence= prevdf_ps_period2, TotalAbundance=taxa_sums(ps_period2))
+#View(prevdf_ps_period2)
+
+core_ps_period2 <- rownames(prevdf_ps_period2)[prevdf_ps_period2$Prevalence >=183]
+core_ps_period2 #3 asv
+
+ps_core_period2 <- prune_taxa(core_ps_period2, norm_IBK)
+ps_core_period2
+sum(otu_table(ps_core_period2))/sum(otu_table(norm_IBK)) #78.9% those ASVs count for this % of total reads 
+save(ps_core_period2, file = "ps_core_period2.rds")
+#load("ps_core_period2.rds")
+#Period 3
+ps_IBK_analyze
+ps_period3 <- subset_samples(ps_IBK_analyze, Date_swabbed == "6_26_18")
+ps_period3
+
+
+
+prevdf_ps_period3= apply(X = otu_table(ps_period3), 
+                       MARGIN = ifelse(taxa_are_rows(ps_period3), yes = 1, no = 2), 
+                       FUN = function(x){sum(x > 0)})
+prevdf_ps_period3 <- data.frame(Prevalence= prevdf_ps_period3, TotalAbundance=taxa_sums(ps_period3))
+#View(prevdf_ps_period3)
+
+core_ps_period3 <- rownames(prevdf_ps_period3)[prevdf_ps_period3$Prevalence >= 151]
+core_ps_period3 #5 asv
+
+ps_core_period3 <- prune_taxa(core_ps_period3, norm_IBK)
+ps_core_period3
+sum(otu_table(ps_core_period3))/sum(otu_table(norm_IBK)) #79.7% those ASVs count for this % of total reads
+save(ps_core_period3, file = "ps_core_period3.rds")
+#load("ps_core_period3.rds")
+#Period 4
+ps_IBK_analyze
+ps_period4 <- subset_samples(ps_IBK_analyze, Date_swabbed == "10_2_18")
+ps_period4
+
+
+prevdf_ps_period4= apply(X = otu_table(ps_period4), 
+                       MARGIN = ifelse(taxa_are_rows(ps_period4), yes = 1, no = 2), 
+                       FUN = function(x){sum(x > 0)})
+prevdf_ps_period4 <- data.frame(Prevalence= prevdf_ps_period4, TotalAbundance=taxa_sums(ps_period4))
+#View(prevdf_ps_period4)
+
+core_ps_period4 <- rownames(prevdf_ps_period4)[prevdf_ps_period4$Prevalence >= 148]
+core_ps_period4 #40 asv
+
+ps_core_period4 <- prune_taxa(core_ps_period4, norm_IBK)
+ps_core_period4
+sum(otu_table(ps_core_period4))/sum(otu_table(norm_IBK)) #83.7% those ASVs count for this % of reads
+save(ps_core_period4, file = "ps_core_period4.rds")
+#load("ps_core_period4.rds")
+write.table(core_ps_period4, "ps_p4.txt")
+```
+
+
+
+#merging ASVs together for core of each individual time point
+```{r ,echo=TRUE}
+#found unique asvs from code above
+ASV_periods <- c("ASV_1","ASV_2","ASV_3","ASV_4","ASV_7","ASV_8","ASV_9","ASV_10","ASV_12","ASV_13","ASV_15","ASV_17","ASV_18","ASV_19","ASV_20","ASV_21","ASV_23","ASV_25","ASV_27","ASV_28","ASV_29","ASV_30","ASV_32","ASV_35","ASV_36","ASV_37","ASV_39","ASV_40","ASV_41","ASV_44","ASV_45","ASV_46","ASV_49","ASV_50","ASV_51","ASV_52","ASV_54","ASV_55","ASV_56","ASV_59","ASV_60","ASV_61","ASV_64","ASV_65","ASV_67","ASV_70","ASV_77","ASV_81","ASV_82","ASV_92","ASV_99","ASV_100","ASV_108","ASV_156" )
+
+
+ASV_periods
+allTaxa_IBK_periods <- taxa_names(norm_IBK)
+allTaxa1_IBK_periods <- allTaxa_IBK_periods[(allTaxa_IBK_periods %in% ASV_periods)]
+core_ASV_IBK_54 <- prune_taxa(allTaxa1_IBK_periods, norm_IBK)
+taxa_names(core_ASV_IBK_54)
+save(core_ASV_IBK_54, file = "core_ASV_IBK_54.rds")
+load("core_ASV_IBK_54.rds")
+write.table(otu_table(core_ASV_IBK_54), "core_ASV_IBK_54.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+
+```
+
+#dendogram for core of all time swabbings
+```{r ,echo=TRUE}
+library(dendextend)
+library(gplots)
+hi_plot_deseq_ibk_54 <- phyloseq::distance(core_ASV_IBK_54, method = "wunifrac")
+save(hi_plot_deseq_ibk_54, file = "hi_plot_deseq_ibk_54.rds")
+load("hi_plot_deseq_ibk_54.rds")
+
+hi_clust_ibk_54 <- hclust(hi_plot_deseq_ibk_54, method = "ward.D2")
+plot(hi_clust_ibk_54) 
+
+
+#made a new mappingfile 
+mappingfile_dendrogram_IBK <- read.table("mappingfile_dendrogram_ibk.txt", sep = "\t", header = T, comment.char = "")
+#View(mappingfile_dendrogram_IBK)
+mappingfile_dendrogram_IBK$Color <- as.character(mappingfile_dendrogram_IBK$Color)
+
+mappingfile_dendrogram_IBK$Sample_ID
+
+
+wuni_dend_IBK_t <- as.dendrogram(hi_clust_ibk_54, hang=0.1)
+
+SampleID_den_IBK <- labels(wuni_dend_IBK_t)
+
+SampleID_den_IBK 
+
+sort_mapping_dendo_IBK <- mappingfile_dendrogram_IBK[match(SampleID_den_IBK, mappingfile_dendrogram_IBK$Sample_ID),]
+
+#View(sort_mapping_dendo_IBK)
+
+labels_colors(wuni_dend_IBK_t) <- sort_mapping_dendo_IBK$Color
+labels_colors(wuni_dend_IBK_t)
+
+
+labels(wuni_dend_IBK_t) <- sort_mapping_dendo_IBK$Period
+wuni_dend_IBK_t <- set(wuni_dend_IBK_t, "labels_cex", 0.5)
+labels(wuni_dend_IBK_t)
+plot(wuni_dend_IBK_t, ylab="Weighted UniFrac Distance")
+```
+
+#heatmap with dendrogram for core of all time swabbings
+```{r ,echo=TRUE}
+library(gplots)
+library(heatmap.plus)
+library(RColorBrewer)
+core_54 <- otu_table(t(core_ASV_IBK_54))
+core_54_df <- as.data.frame(core_54)
+dim(core_54_df)
+
+input_input <- as.matrix(core_54_df)
+dim(input_input)
+##reading out table to combine ASV# with ASV classification
+write.table(otu_table(core_54), file = "input_dendrogram.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+write.table(tax_table(core_ASV_IBK_54), file = "input_taxa_core.txt", sep = "\t", quote = F, row.names = T, col.names = NA)
+
+##reading back in
+run_dendrogram <- read.table("input_dendrogram_run.txt",  sep = "\t", header = T, quote = "", stringsAsFactors = F, row.names = 1)
+run_dendrogram <- as.matrix(run_dendrogram)
+
+col_labels <- labels(wuni_dend_IBK_t)
+#View(col_labels)
+
+
+col_labels <- col_labels[order(order.dendrogram(wuni_dend_IBK_t))]
+#View(col_labels)
+
+col_col <- labels_colors(wuni_dend_IBK_t)
+#View(col_col)
+col_col <- col_col[order(order.dendrogram(wuni_dend_IBK_t))]
+#View(col_col)
+
+
+
+heatmap.2(run_dendrogram, scale = "none", col = colorpanel(100, low = "grey", high = "black"), Colv = wuni_dend_IBK_t,
+          trace = "none", density = "none", breaks = seq(from=min(range(run_dendrogram)), to=max(range(run_dendrogram)), length.out = 101), symm = F, symkey = F, symbreaks = T, cexRow=0.5, labCol = col_labels, colCol = col_col, ColSideColors = col_col, key = T, margins = c(2,10), dendrogram = "column")
+
+#making a pdf to export
+pdf("core_54.pdf")
+plot(heatmap.2(run_dendrogram, scale = "none", col = colorpanel(100, low = "grey", high = "black"), Colv = wuni_dend_IBK_t,
+          trace = "none", density = "none", breaks = seq(from=min(range(run_dendrogram)), to=max(range(run_dendrogram)), length.out = 101), symm = F, symkey = F, symbreaks = T, cexRow=0.5, labCol = col_labels, colCol = col_col, ColSideColors = col_col, key = T, margins = c(2,10), dendrogram = "column"))
+dev.off()
+```
+
+#filtering core without (ASV_1, ASV_2, ASV_3) to make dendrogram with heatmap
+```{r ,echo=TRUE}
+#filtering off asv 1, 2, 3
+core_51 <- c("ASV_4","ASV_7","ASV_8","ASV_9","ASV_10","ASV_12","ASV_13","ASV_15","ASV_17","ASV_18","ASV_19","ASV_20","ASV_21","ASV_23","ASV_25","ASV_27","ASV_28","ASV_29","ASV_30","ASV_32","ASV_35","ASV_36","ASV_37","ASV_39","ASV_40","ASV_41","ASV_44","ASV_45","ASV_46","ASV_49","ASV_50","ASV_51","ASV_52","ASV_54","ASV_55","ASV_56","ASV_59","ASV_60","ASV_61","ASV_64","ASV_65","ASV_67","ASV_70","ASV_77","ASV_81","ASV_82","ASV_92","ASV_99","ASV_100","ASV_108","ASV_156" )
+core_51
+allTaxa_IBK_periods_51 <- taxa_names(norm_IBK)
+allTaxa1_IBK_periods_51 <- allTaxa_IBK_periods_51[(allTaxa_IBK_periods_51 %in% core_51)]
+core_ASV_IBK_periods_51 <- prune_taxa(allTaxa1_IBK_periods_51, norm_IBK)
+taxa_names(core_ASV_IBK_periods_51)
+save(core_ASV_IBK_periods_51, file = "core_ASV_IBK_periods_51.rds")
+#load("core_ASV_IBK_periods_32.rds")
+
+core_51 <- otu_table(t(core_ASV_IBK_periods_51))
+core_51_df <- as.data.frame(core_51)
+dim(core_51_df)
+
+input51 <- as.matrix(core_51_df)
+dim(input51)
+##reading out table to combine ASV# with ASV classification
+write.table(input51, file = "input_dendrogram_51.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+write.table(tax_table(core_ASV_IBK_periods_51), file = "input_taxa_core_51.txt", sep = "\t", quote = F, row.names = T, col.names = NA)
+
+##reading back in
+run_dendrogram_51 <- read.table("input_dendrogram_51_run.txt",  sep = "\t", header = T, quote = "", stringsAsFactors = F, row.names = 1)
+run_dendrogram_51 <- as.matrix(run_dendrogram_51)
+
+
+
+col_labels <- labels(wuni_dend_IBK_t)
+#View(col_labels)
+
+
+col_labels <- col_labels[order(order.dendrogram(wuni_dend_IBK_t))]
+#View(col_labels)
+
+col_col <- labels_colors(wuni_dend_IBK_t)
+#View(col_col)
+col_col <- col_col[order(order.dendrogram(wuni_dend_IBK_t))]
+#View(col_col)
+
+
+
+heatmap.2(run_dendrogram_51, scale = "none", col = colorpanel(100, low = "grey", high = "black"), Colv = wuni_dend_IBK_t,
+          trace = "none", density = "none", breaks = seq(from=min(range(0.0)), to=max(range(0.05)), length.out = 101), symm = F, symkey = F, symbreaks = T, labCol = col_labels, colCol = col_col, cexRow = 0.5, ColSideColors = col_col, key = T, dendrogram = "column", margins = c(2, 10.0), scale(0.01))
+
+#making a pdf version
+pdf("core_51.pdf")
+plot(heatmap.2(run_dendrogram_51, scale = "none", col = colorpanel(100, low = "grey", high = "black"), Colv = wuni_dend_IBK_t,
+          trace = "none", density = "none", breaks = seq(from=min(range(0.0)), to=max(range(0.05)), length.out = 101), symm = F, symkey = F, symbreaks = T, labCol = col_labels, colCol = col_col, cexRow = 0.5, ColSideColors = col_col, key = T, dendrogram = "column", margins = c(2, 10.0), scale(0.01)))
+dev.off()
+
+```
+#writing out tables for CMM taxa based on time 
+```{r ,echo=TRUE}
+core_ASV_IBK_54
+cmm_p1 <- subset_samples(core_ASV_IBK_54, Date_swabbed == "5_16_18")
+cmm_p2 <- subset_samples(core_ASV_IBK_54, Date_swabbed == "6_6_18")
+cmm_p3 <- subset_samples(core_ASV_IBK_54, Date_swabbed == "6_26_18")
+cmm_p4 <- subset_samples(core_ASV_IBK_54, Date_swabbed == "10_2_18")
+
+write.table(otu_table(cmm_p1), "cmm_p1.txt", sep = "\t", row.names = T, col.names = NA, quote = F)
+write.table(otu_table(cmm_p2), "cmm_p2.txt", sep = "\t", row.names = T, col.names = NA, quote = F)
+write.table(otu_table(cmm_p3), "cmm_p3.txt", sep = "\t", row.names = T, col.names = NA, quote = F)
+write.table(otu_table(cmm_p4), "cmm_p4.txt", sep = "\t", row.names = T, col.names = NA, quote = F)
+```
+#subsetting samples for Moraxella and Mycoplasma analysis (output was looked at in excel)
+```{r ,echo=TRUE}
+#Moraxella
+ps_moraxella <- merge_phyloseq(norm_IBK, sample_data(mappingfile_IBKY1), tax_table(taxTaA))
+taxa_names(ps_moraxella)
+moraxella_filter <- subset_taxa(ps_moraxella, Genus == "Moraxella")
+moraxella_filter
+
+moraxella_filter_p1 <- subset_samples(moraxella_filter)
+
+tax_moraxella <-as(tax_table(moraxella_filter), "matrix")
+tax_cols_moraxella <- colnames(tax_moraxella)
+tax_moraxella <- as.data.frame(tax_moraxella)
+tax_moraxella$taxonomy <- do.call(paste, c(tax_moraxella [tax_cols_moraxella], sep = ";"))
+for(co in tax_cols_moraxella) tax_moraxella[co] <- NULL
+write.table(otu_table(moraxella_filter), "moraxella.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+
+prevdf_ps_mo= apply(X = otu_table(moraxella_filter), 
+                       MARGIN = ifelse(taxa_are_rows(moraxella_filter), yes = 1, no = 2), 
+                       FUN = function(x){sum(x > 0)})
+prevdf_ps_mo <- data.frame(Prevalence= prevdf_ps_mo, TotalAbundance=taxa_sums(moraxella_filter))
+View(prevdf_ps_mo)
+#sum(otu_table(moraxella_filter))/sum(otu_table(ps_IBK_analyze)) ## 1.24%
+#sum(otu_table(moraxella_filter))/nsamples(moraxella_filter)
+
+#Mycoplasma
+ps_mycoplasma <- merge_phyloseq(norm_IBK, sample_data(mappingfile_IBKY1), tax_table(taxTaA))
+taxa_names(ps_mycoplasma)
+mycoplasma_filter <- subset_taxa(ps_mycoplasma, Genus == "Mycoplasma")
+mycoplasma_filter
+
+prevdf_ps_m= apply(X = otu_table(mycoplasma_filter), 
+                       MARGIN = ifelse(taxa_are_rows(mycoplasma_filter), yes = 1, no = 2), 
+                       FUN = function(x){sum(x > 0)})
+prevdf_ps_m <- data.frame(Prevalence= prevdf_ps_m, TotalAbundance=taxa_sums(mycoplasma_filter))
+View(prevdf_ps_m)
+
+#sum(otu_table(mycoplasma_filter))/sum(otu_table(ps_IBK_analyze)) ##29.04%
+
+tax_mycoplasma <-as(tax_table(mycoplasma_filter), "matrix")
+tax_cols_mycoplasma <- colnames(tax_mycoplasma)
+tax_mycoplasma <- as.data.frame(tax_mycoplasma)
+tax_mycoplasma$taxonomy <- do.call(paste, c(tax_mycoplasma [tax_cols_mycoplasma], sep = ";"))
+for(co in tax_cols_mycoplasma) tax_mycoplasma[co] <- NULL
+write.table(tax_mycoplasma, "tax_mycoplasma.txt", quote = FALSE, col.names = FALSE, sep = "\t")
+write.table(otu_table(mycoplasma_filter), "mycoplasma.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+
+#filtering asvs of only Moraxella and Mycoplasma
+filter_ASV_moraxella_mycoplasma <- subset_taxa(ps_mycoplasma, Genus == "Mycoplasma" | Genus == "Moraxella")
+filter_ASV_moraxella_mycoplasma
+
+
+myco_ulcer <- subset_samples(mycoplasma_filter, Ulcer_positive != "NONE")
+morax_ulcer <- subset_samples(moraxella_filter, Ulcer_positive != "NONE")
+write.table(otu_table(myco_ulcer), "myco_ulcer.txt", sep = "\t", row.names = T, col.names = NA, quote = F )
+write.table(otu_table(morax_ulcer), "morax_ulcer.txt", sep = "\t", row.names = T, col.names = NA, quote = F)
+```
+#PCoA_weighted_Ulcer
+```{r ,echo=TRUE}
+ps_ulcer_positive <- subset_samples(norm_IBK, infected != "NONE")
+
+##cattle removed from IBK pre/post analysis due to being treated for infection after the 21 day cut off mark
+ps_pinkeye_positive2 <- subset_samples(ps_ulcer_positive, Animal_ID !="8026F")
+ps_pinkeye_positive3 <- subset_samples(ps_pinkeye_positive2, Animal_ID !="8199F")
+ps_pinkeye_positive4 <- subset_samples(ps_pinkeye_positive3, Animal_ID !="8022F")
+ps_pinkeye_positive5 <- subset_samples(ps_pinkeye_positive4, Animal_ID !="8033F")
+
+
+#View(mappingfile_IBKY1)
+ord.nmds.pcoa1 <- ordinate(ps_pinkeye_positive5, method="PCoA", distance="wunifrac")
+ulcer_beta <- plot_ordination(ps_pinkeye_positive5, ord.nmds.pcoa1, color="Ulcer_positive")+
+  geom_point(size=7)
+
+pdf("Figure4_updated.pdf")
+plot(ulcer_beta)
+dev.off()
+```
+#t test against ulcer (+) cattle with mycoplasma and moraxella
+```{r, echo= True}
+morax_ttest <- read.table("morax_ulcer_ttest.txt",  sep = "\t", header = T, quote = "", stringsAsFactors = F, row.names = 1)
+
+observed = morax_ttest$Value
+theoretical = 50
+
+t.test(observed,
+       mu= theoretical,
+       conf.level= 0.95)
+
+
+morax_ttest <- read.table("myco_ulcer_ttets.txt",  sep = "\t", header = T, quote = "", stringsAsFactors = F, row.names = 1)
+
+observed = morax_ttest$Value
+theoretical = 50
+
+t.test(observed,
+       mu= theoretical,
+       conf.level= 0.95)
+```
+
+#diff ASVs for cattle infected with IBK pre and post
+```{r ,echo=TRUE}
+library(DESeq2)
+ps_ulcer <- subset_samples(ps_IBK_analyze, infected != "NONE")
+
+ps_pinkeye_deseq2 <- subset_samples(ps_ulcer, Animal_ID !="8026F")
+ps_pinkeye_deseq3 <- subset_samples(ps_pinkeye_deseq2, Animal_ID !="8199F")
+ps_pinkeye_deseq4 <- subset_samples(ps_pinkeye_deseq3, Animal_ID !="8022F")
+ps_pinkeye_deseq5 <- subset_samples(ps_pinkeye_deseq4, Animal_ID !="8033F")
+
+diagdds = phyloseq_to_deseq2(ps_pinkeye_deseq2, ~ infected)
+# calculate geometric means prior to estimate size factors
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, fitType="local")
+diagdds = estimateDispersions(diagdds)
+diagvst = getVarianceStabilizedData(diagdds)
+dim(diagvst)
+
+
+#Diff ASVs
+diagdds = DESeq(diagdds)  #, fitType='local')
+res_IBK = results(diagdds)
+res_IBK = res_IBK[order(res_IBK$padj, na.last = NA), ]
+alpha = 0.05
+keepOTUs_IBK_ulcer = rownames(res_IBK[res_IBK$padj < alpha, ])[1:50] #looking at top diff asvs between pre and post infection
+kosticTrimvs_IBK_ulcer = prune_taxa(keepOTUs_IBK_ulcer, ps_pinkeye_deseq2)
+kosticTrimvs_IBK_ulcer
+#View(kosticTrimvs_IBK)
+
+#write.table(otu_table(kosticTrimvs_IBK_ulcer), "diff_asvs_ulcer.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+save(kosticTrimvs_IBK_ulcer, file = "kosticTrimvs_ulcer.rds")
+#load("kosticTrimvs_ulcer.rds")
+
+ulcer <- c(keepOTUs_IBK_ulcer)
+
+
+
+allTaxa_IBK_ulcer <- taxa_names(ps_pinkeye_positive5)
+allTaxa1_IBK_ulcer <- allTaxa_IBK_ulcer[(allTaxa_IBK_ulcer %in% ulcer)]
+diff_ASV_IBK_ulcer <- prune_taxa(allTaxa1_IBK_ulcer, ps_pinkeye_positive5)
+taxa_names(diff_ASV_IBK_ulcer)
+save(diff_ASV_IBK_ulcer, file = "diff_ASV_IBK_ulcer.rds")
+#load("diff_ASV_IBK_ulcer.rds")
+View(mappingfile_IBKY1)
+#heatmap
+plot_heatmap(diff_ASV_IBK_ulcer, sample.order = "Ulcer_positive", sample.label = "Ulcer_positive", taxa.order= "Phylum", taxa.label = "Family")
+
+#saving a pdf version
+pdf("ulcer_diff.pdf")
+plot(plot_heatmap(diff_ASV_IBK_ulcer, sample.label = "Ulcer_positive", sample.order = "Ulcer_positive", taxa.order= "Phylum", taxa.label = "Family"))
+dev.off()
+
+```
+
+#deseq2 diff asvs for each time period by filtering comparison 
+```{r ,echo=TRUE}
+load("ps_IBK_analyze.rds")
+#time 1 and 2
+ps_1 <- subset_samples(ps_IBK_analyze, Date_swabbed != "6_26_18")
+ps_1_2 <- subset_samples(ps_1, Date_swabbed != "10_2_18")
+
+diagdds = phyloseq_to_deseq2(ps_1_2, ~ Date_swabbed)
+# calculate geometric means prior to estimate size factors
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, fitType="local")
+diagdds = estimateDispersions(diagdds)
+diagvst = getVarianceStabilizedData(diagdds)
+dim(diagvst)
+
+load("ps_IBK_analyze.rds")
+#Diff ASVs
+diagdds = DESeq(diagdds)  #, fitType='local')
+res_IBK = results(diagdds)
+res_IBK = res_IBK[order(res_IBK$padj, na.last = NA), ]
+alpha = 0.05
+keepOTUs25_p12 = rownames(res_IBK[res_IBK$padj < alpha, ])[1:25]
+kosticTrimvs25_IBK_p12 = prune_taxa(keepOTUs25_p12, norm_IBK)
+kosticTrimvs25_IBK_p12
+#View(kosticTrimvs_IBK)
+save(kosticTrimvs25_IBK_p12, file = "kosticTrimvs25_p12.rds")
+#load("kosticTrimvs_p12.rds")
+write.table(otu_table(kosticTrimvs25_IBK_p12), "kosticTrimvs25_IBK_p12.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+plot_heatmap(kosticTrimvs25_IBK_p12, sample.label = "Time", sample.order = "Time", taxa.order= "Phylum", taxa.label = "Family")
+```
+
+##period 1 and 3
+```{r ,echo= True}
+load("ps_IBK_analyze.rds")
+
+ps_1 <- subset_samples(ps_IBK_analyze, Date_swabbed != "6_6_18")
+ps_1_3 <- subset_samples(ps_1, Date_swabbed != "10_2_18")
+
+diagdds = phyloseq_to_deseq2(ps_1_3, ~ Date_swabbed)
+# calculate geometric means prior to estimate size factors
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, fitType="local")
+diagdds = estimateDispersions(diagdds)
+diagvst = getVarianceStabilizedData(diagdds)
+dim(diagvst)
+
+load("ps_IBK_analyze.rds")
+#Diff ASVs
+diagdds = DESeq(diagdds)  #, fitType='local')
+res_IBK = results(diagdds)
+res_IBK = res_IBK[order(res_IBK$padj, na.last = NA), ]
+alpha = 0.05
+keepOTUs25_p13 = rownames(res_IBK[res_IBK$padj < alpha, ])[1:25]
+kosticTrimvs25_IBK_p13 = prune_taxa(keepOTUs25_p13, norm_IBK)
+kosticTrimvs25_IBK_p13
+#View(kosticTrimvs_IBK)
+#save(kosticTrimvs25_IBK_p13, file = "kosticTrimvs25_p13.rds")
+#load("kosticTrimvs_p13.rds")
+#write.table(otu_table(kosticTrimvs25_IBK_p13), "kosticTrimvs25_IBK_p13.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+plot_heatmap(kosticTrimvs25_IBK_p13, sample.label = "Time", sample.order = "Time", taxa.order= "Phylum", taxa.label = "Family")
+```
+
+##period 1 and 4
+```{r ,echo= True}
+load("ps_IBK_analyze.rds")
+
+ps_1 <- subset_samples(ps_IBK_analyze, Date_swabbed != "6_6_18")
+ps_1_4 <- subset_samples(ps_1, Date_swabbed != "6_26_18")
+
+diagdds = phyloseq_to_deseq2(ps_1_4, ~ Date_swabbed)
+# calculate geometric means prior to estimate size factors
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, fitType="local")
+diagdds = estimateDispersions(diagdds)
+diagvst = getVarianceStabilizedData(diagdds)
+dim(diagvst)
+
+load("ps_IBK_analyze.rds")
+#Diff ASVs
+diagdds = DESeq(diagdds)  #, fitType='local')
+res_IBK = results(diagdds)
+res_IBK = res_IBK[order(res_IBK$padj, na.last = NA), ]
+alpha = 0.05
+keepOTUs25_p14 = rownames(res_IBK[res_IBK$padj < alpha, ])[1:25]
+kosticTrimvs25_IBK_p14 = prune_taxa(keepOTUs25_p14, norm_IBK)
+kosticTrimvs25_IBK_p14
+#View(kosticTrimvs_IBK)
+#save(kosticTrimvs25_IBK_p14, file = "kosticTrimvs25_p14.rds")
+#load("kosticTrimvs_p14.rds")
+#write.table(otu_table(kosticTrimvs25_IBK_p14), "kosticTrimvs25_IBK_p14.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+plot_heatmap(kosticTrimvs25_IBK_p14, sample.label = "Time", sample.order = "Time", taxa.order= "Phylum", taxa.label = "Family")
+```
+
+#period 2 and 3
+```{r ,echo= True}
+load("ps_IBK_analyze.rds")
+
+ps_2 <- subset_samples(ps_IBK_analyze, Date_swabbed != "5_16_18")
+ps_2_3 <- subset_samples(ps_2, Date_swabbed != "10_2_18")
+
+diagdds = phyloseq_to_deseq2(ps_2_3, ~ Date_swabbed)
+# calculate geometric means prior to estimate size factors
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, fitType="local")
+diagdds = estimateDispersions(diagdds)
+diagvst = getVarianceStabilizedData(diagdds)
+dim(diagvst)
+
+load("ps_IBK_analyze.rds")
+#Diff ASVs
+diagdds = DESeq(diagdds)  #, fitType='local')
+res_IBK = results(diagdds)
+res_IBK = res_IBK[order(res_IBK$padj, na.last = NA), ]
+alpha = 0.05
+keepOTUs25_p23 = rownames(res_IBK[res_IBK$padj < alpha, ])[1:25]
+kosticTrimvs25_IBK_p23 = prune_taxa(keepOTUs25_p23, norm_IBK)
+kosticTrimvs25_IBK_p23
+#View(kosticTrimvs_IBK)
+#save(kosticTrimvs25_IBK_p23, file = "kosticTrimvs25_p23.rds")
+#load("kosticTrimvs_p23.rds")
+#write.table(otu_table(kosticTrimvs25_IBK_p23), "kosticTrimvs25_IBK_p23.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+plot_heatmap(kosticTrimvs25_IBK_p23, sample.label = "Time", sample.order = "Time", taxa.order= "Phylum", taxa.label = "Family")
+```
+
+#period 2 and 4
+```{r ,echo= True}
+load("ps_IBK_analyze.rds")
+
+ps_2 <- subset_samples(ps_IBK_analyze, Date_swabbed != "5_16_18")
+ps_2_4 <- subset_samples(ps_2, Date_swabbed != "6_26_18")
+
+diagdds = phyloseq_to_deseq2(ps_2_4, ~ Date_swabbed)
+# calculate geometric means prior to estimate size factors
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, fitType="local")
+diagdds = estimateDispersions(diagdds)
+diagvst = getVarianceStabilizedData(diagdds)
+dim(diagvst)
+
+load("ps_IBK_analyze.rds")
+#Diff ASVs
+diagdds = DESeq(diagdds)  #, fitType='local')
+res_IBK = results(diagdds)
+res_IBK = res_IBK[order(res_IBK$padj, na.last = NA), ]
+alpha = 0.05
+keepOTUs25_p24 = rownames(res_IBK[res_IBK$padj < alpha, ])[1:25]
+kosticTrimvs25_IBK_p24 = prune_taxa(keepOTUs25_p24, norm_IBK)
+kosticTrimvs25_IBK_p24
+#View(kosticTrimvs_IBK)
+#save(kosticTrimvs25_IBK_p24, file = "kosticTrimvs25_p24.rds")
+#load("kosticTrimvs_p23.rds")
+#write.table(otu_table(kosticTrimvs25_IBK_p24), "kosticTrimvs25_IBK_p24.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+plot_heatmap(kosticTrimvs25_IBK_p24, sample.label = "Time", sample.order = "Time", taxa.order= "Phylum", taxa.label = "Family")
+```
+#period 3 and 4
+```{r ,echo= True}
+load("ps_IBK_analyze.rds")
+
+ps_3 <- subset_samples(ps_IBK_analyze, Date_swabbed != "5_16_18")
+ps_3_4 <- subset_samples(ps_3, Date_swabbed != "6_2_18")
+
+diagdds = phyloseq_to_deseq2(ps_3_4, ~ Date_swabbed)
+# calculate geometric means prior to estimate size factors
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, fitType="local")
+diagdds = estimateDispersions(diagdds)
+diagvst = getVarianceStabilizedData(diagdds)
+dim(diagvst)
+
+load("ps_IBK_analyze.rds")
+#Diff ASVs
+diagdds = DESeq(diagdds)  #, fitType='local')
+res_IBK = results(diagdds)
+res_IBK = res_IBK[order(res_IBK$padj, na.last = NA), ]
+alpha = 0.05
+keepOTUs25_p34 = rownames(res_IBK[res_IBK$padj < alpha, ])[1:25]
+kosticTrimvs25_IBK_p34 = prune_taxa(keepOTUs25_p34, norm_IBK)
+kosticTrimvs25_IBK_p34
+#View(kosticTrimvs_IBK)
+#save(kosticTrimvs25_IBK_p34, file = "kosticTrimvs25_p34.rds")
+#load("kosticTrimvs_p34.rds")
+#write.table(otu_table(kosticTrimvs25_IBK_p34), "kosticTrimvs25_IBK_p34.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+plot_heatmap(kosticTrimvs25_IBK_p34, sample.label = "Time", sample.order = "Time", taxa.order= "Phylum", taxa.label = "Family")
+```
+
+#top 25 unique diff asvs merged from time periods 1-4
+```{r ,echo= True}
+diff_asvs_between_time25 <- c(keepOTUs25_p12, keepOTUs25_p13, keepOTUs25_p14, keepOTUs25_p23, keepOTUs25_p24, keepOTUs25_p34)
+allTaxa_IBK_diff_period25 <- taxa_names(norm_IBK)
+allTaxa1_IBK_diff_period25  <- allTaxa_IBK_diff_period25[(allTaxa_IBK_diff_period25 %in% diff_asvs_between_time25)]
+IBK_diff_period25  <- prune_taxa(allTaxa1_IBK_diff_period25, norm_IBK)
+taxa_names(IBK_diff_period25 )
+#save(IBK_diff_period25 , file = "IBK_diff_period25.rds")
+#load("IBK_diff_period25.rds")
+
+plot_heatmap(IBK_diff_period25, sample.label = "Time", sample.order = "Time", taxa.order= "Phylum", taxa.label = "Order")
+
+```
+
+#plotting those taxa on a pheatmap so that we can visualize the hiarcheal clustering among those taxa. 
+```{r ,echo= True}
+library("pheatmap")
+IBK_otu <- otu_table(t(IBK_diff_period25))
+IBK_df_t <- as.data.frame(IBK_otu)
+dim(IBK_df_t)
+head(IBK_df_t[, 1:20])
+#View(IBK_df_t)
+
+write.table(otu_table(IBK_diff_period25), "test_pheatmap.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+write.table(tax_table(IBK_diff_period25), file = "diff_taxa2.txt", sep = "\t", quote = F, row.names = T, col.names = NA)
+ibk_pheatmap <- read.table("test_pheatmap.txt",  sep = "\t", header = T, quote = "", stringsAsFactors = F, row.names = 1, check.names = F)
+ibk_pheatmap1 <- as.data.frame(t(ibk_pheatmap))
+dim(ibk_pheatmap1)
+
+
+Bac.factors_IBK <- read.csv(file = "sample_names_pheatmap_2.csv", header = TRUE, row.names = 1)
+str(Bac.factors_IBK)
+Bac.factorsDS_IBK <- select(Bac.factors_IBK,Time)
+
+
+breaksList = seq(0, .001, by = .00001)
+
+#SampleOrder = order(Bac.factorsDS$Sampling)
+
+pheatmap(ibk_pheatmap1, breaks = breaksList, cluster_cols = F, annotation_col = Bac.factors_IBK,fontsize_row = 4, fontsize_col = 0.5)
+
+pdf("heatmap_diff.pdf")
+plot(pheatmap(ibk_pheatmap1, breaks = breaksList, cluster_cols = F, annotation_col = Bac.factors_IBK,fontsize_row = 4, fontsize_col = 0.5))
+dev.off()
+
+```
+
+#making phyloseq object for PICRUSt without ASVs but rather sequence label
+```{r ,echo= True}
+View(mappingfile_IBKY1)
+
+rownames(mappingfile_IBKY1) = mappingfile_IBKY1$Sample_ID
+
+#loading in taxa table
+taxTa <- read.table("taxTa_species.txt",  sep = "\t", header = T, quote = "", stringsAsFactors = F, row.names = 1)
+taxTaA <- as.matrix(taxTa)
+
+#making phyloseq object
+ps1_1 <- phyloseq(otu_table(merged_seq_table, taxa_are_rows = FALSE))
+sample_names(ps1_1) <- paste("sa", sample_names(ps1_1), sep = "")
+ps2_1 <- merge_phyloseq(ps1_1, sample_data(mappingfile_IBKY1))
+PICRUSt <- merge_phyloseq(ps2_1, tax_table(taxTaA))
+#View(merged_seq_table)
+
+sample_names(mappingfile_IBKY1)
+row.names(mappingfile_IBKY1) <- as.character(mappingfile_IBKY1[, 1])
+save(PICRUSt, file = "PICRUSt.rds")
+load("PICRUSt.rds")
+#checking to make sure that sequencing are shown
+head(taxa_names(PICRUSt))
+
+#removing contaminants
+
+sample_data(PICRUSt)$is.neg <- sample_data(PICRUSt)$Type == "neg_control"
+contamdf.prev <- isContaminant(PICRUSt, method="prevalence", neg="is.neg", batch = sample_data(PICRUSt)$Run, batch.combine = "minimum")
+table(contamdf.prev$contaminant)
+#View(contamdf.prev)
+
+#keeping the contaminants ( this in order to removal further. can also use to see what family etc these are hitting if wanted )
+
+ps_removal_done <- prune_taxa(!contamdf.prev$contaminant, PICRUSt)
+
+#removing Kingdoms
+remove_kingdoms <- c( "Archaea", "Eukaryota")
+ps_filtered_PICRUSt <- subset_taxa(ps_removal_done, !Kingdom %in% remove_kingdoms)
+taxa_names(ps_filtered_PICRUSt)
+
+save(ps_filtered_PICRUSt, file = "ps_filtered_PICRUSt.rds")
+
+#removing Negative controls
+ps_pinkeye_neg_PICRUSt <- subset_samples(ps_filtered_PICRUSt, Animal_ID != "NEG_CON")
+ps_pinkeye_neg_PICRUSt #891 samples
+
+save(ps_pinkeye_neg_PICRUSt, file = "ps_pinkeye_neg_PICRUSt.rds")
+
+#removing cows which were not on trial but got sampled and samples below 3,000 reads
+min <- min(sample_sums(ps_pinkeye_neg_PICRUSt))
+reads_per_sample1_PICRUSt <- data.frame(Reads = sample_sums(ps_pinkeye_neg_PICRUSt))
+reads_per_sample1_PICRUSt$Sample_ID <- rownames(reads_per_sample1_PICRUSt)
+fil= c("sa484", "sa505", "sa865", "sa877", "sa863", "sa528", "sa889", "sa791", "sa874", "sa875", "sa128", "sa848", "sa134", "sa882", "sa887", "sa870", "sa133", "sa873", "sa895", "sa880", "sa866", "sa892", "sa893", "sa79", "sa885", "sa766", "sa136", "sa160", "sa121") 
+
+ps_pinkeye_analyze_PICRUSt = prune_samples(!(sample_names(ps_pinkeye_neg_PICRUSt) %in% fil), ps_pinkeye_neg_PICRUSt)
+ps_pinkeye_analyze_PICRUSt
+min2 <- min(sample_sums(ps_pinkeye_analyze_PICRUSt))
+reads_per_sample2_PICRUSt <- data.frame(Reads = sample_sums(ps_pinkeye_analyze_PICRUSt))
+reads_per_sample2_PICRUSt$Sample_ID <- rownames(reads_per_sample2_PICRUSt)
+#View(reads_per_sample2_PICRUSt)
+save(ps_pinkeye_analyze_PICRUSt, file= "ps_pinkeye_analyze_PICRUSt.rds")
+#load("ps_pinkeye_analyze_PICRUSt.rds")
+
+#filtering out based on prevelance
+prevdf_ps_PICRUSt = apply(X = otu_table(ps_pinkeye_analyze_PICRUSt), 
+                       MARGIN = ifelse(taxa_are_rows(ps_pinkeye_analyze_PICRUSt), yes = 1, no = 2), 
+                       FUN = function(x){sum(x > 0)})
+prevdf_ps_PICRUSt <- data.frame(Prevalence= prevdf_ps_PICRUSt, TotalAbundance=taxa_sums(ps_pinkeye_analyze_PICRUSt))
+#View(prevdf_ps)
+
+ps_IBK_run_PICRUSt <- rownames(prevdf_ps_PICRUSt)[prevdf_ps_PICRUSt$Prevalence > 1]
+ps_IBK_run_PICRUSt
+
+ps_IBK_analyze_PICRUSt <- prune_taxa(ps_IBK_run_PICRUSt, ps_pinkeye_analyze_PICRUSt)
+ps_IBK_analyze_PICRUSt
+sum(otu_table(ps_IBK_analyze_PICRUSt))/sum(otu_table(ps_pinkeye_analyze_PICRUSt)) #99.58% those reads
+save(ps_IBK_analyze_PICRUSt, file = "ps_IBK_analyze_PICRUSt.rds")
+load("ps_IBK_analyze_PICRUSt.rds")
+
+```
+
+#making files for PICRUSt
+```{r, echo = TRUE}
+## getting the necessary input files for PICRUSt
+seqtab_PICRUSt <- as(otu_table(ps_IBK_analyze_PICRUSt), "matrix") 
+# making FASTA file
+uniquesToFasta(seqtab_PICRUSt, fout = "PICRUSt_ASV.fna", ids = colnames(seqtab_PICRUSt))
+# write sequence table which would be used as one of the input files for PICRUSt
+write.table(t(seqtab_PICRUSt), "PICRUSt_seqtab.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+```
+
+
+######################PICRUSt###############################
+A new terminal is opened and the following steps are performed in order to carry out the PICRUSt2 analysis (based on the PICRUSt2 pipeline described in the tutorial in https://github.com/picrust/picrust2/wiki/PICRUSt2-Tutorial-(v2.2.0-beta)) :
+
+
+conda create -n picrust2 -c bioconda -c conda-forge picrust2=2.2.0_b # install PICRUSt2 as a conda environment
+conda activate picrust2 # activate PICRUSt2
+## the input files for running PICRUSt2 are "PICRUSt_INF_ASV.fna" (ASVs in FASTA format) and "PICRUSt_INF_seqtab.txt" (seq. table). I made a folder called 'PICRUSt2' and within that folder made a subfolder called 'INF' which had these two input files. The outputs from running the PICRUSt2 commands will be written to this folder.
+(picrust2) alisonbartenslager-mbp:IBK alisonbartenslager$ place_seqs.py -s PICRUSt_ASV.fna -o out_IBK.tre -p 1 --intermediate intermediate/place_seqs
+(picrust2) alisonbartenslager-mbp:IBK alisonbartenslager$ hsp.py -i 16S -t out_IBK.tre -o IBK_marker_predicted_and_nsti.tsv.gz -p 1 -n 
+(picrust2) alisonbartenslager-mbp:IBK alisonbartenslager$ hsp.py -i KO -t out_IBK.tre -o IBK_KO_predicted.tsv.gz #uses KEGG orthology database
+# for the next command, need to convert the '.txt' format "PICRUSt_INF_seqtab.txt" file into a biom format table
+(picrust2) alisonbartenslager-mbp:IBK alisonbartenslager$ echo -n "#OTU Table" | cat - PICRUSt_seqtab.txt > PICRUSt_seqtab-biom-table.txt 
+(picrust2) alisonbartenslager-mbp:IBK alisonbartenslager$ biom convert -i PICRUSt_seqtab-biom-table.txt -o PICRUSt_seqtab.biom --table-type="OTU table" --to-hdf5
+(picrust2) alisonbartenslager-mbp:IBK alisonbartenslager$ metagenome_pipeline.py -i PICRUSt_seqtab.biom -m IBK_marker_predicted_and_nsti.tsv.gz -f IBK_KO_predicted.tsv.gz -o IBK_KO_metagenome_out --strat_out
+317 of 5673 ASVs were above the max NSTI cut-off of 2.0 and were removed.
+# Within the resulting 'IBK_KO_metagenome_out/' folder there is a file called 'KO_pred_metagenome_unstrat.tsv.gz' which is very similar to an OTU/ASV table but has KO features instead of ASVs as rows. The columns are the sample IDs. This is the file we need to read into phyloseq. We'll first unzip the file and then convert it into a JSON-format biom table and read it into phyloseq.
+(picrust2) alisonbartenslager-mbp:IBK_KO_metagenome_out alisonbartenslager$ gunzip pred_metagenome_unstrat.tsv.gz
+(picrust2) alisonbartenslager-mbp:IBK_KO_metagenome_out alisonbartenslager$ biom convert -i pred_metagenome_unstrat.tsv -o IBK_KO_pred_metagenome.biom --table-type="OTU table" --to-json
+#########################################################################################################################################
+
+#reading file back into R and into a phyloseq object from a biom file
+```{r, echo = True}
+#reading in file from PICRUSt2
+picrust_biomfile <- "IBK_KO_pred_metagenome.biom" 
+picrust_biom = biomformat::read_biom(biom_file = picrust_biomfile)
+picrust_biom_table <- import_biom(picrust_biom) 
+class(picrust_biom_table)
+picrust_IBK_seqtab <- t(as(otu_table(picrust_biom_table), "matrix")) # Need to transform it back so that the 'taxa' are columns and the 'samples' are rows since that's how phyloseq wants it
+dim(picrust_IBK_seqtab) #862 7364
+sum(picrust_IBK_seqtab) # check that everything is as expected (27,870,175,386)
+View(picrust_biom_table)
+#making into a phyloseq object
+picrust_IBK_ps <- merge_phyloseq(otu_table(picrust_IBK_seqtab, taxa_are_rows = FALSE), sample_data(ps_IBK_analyze_PICRUSt)) # make a new phyloseq object
+picrust_IBK_ps
+save(picrust_IBK_ps, file = "picrust_IBK_ps.rds")
+load("picrust_IBK_ps.rds")
+```
+
+#removing KOs less than 2 prevalence (to remain consistant with ASVs)
+```{r, echo= True}
+prevdf_ko= apply(X = otu_table(picrust_IBK_ps), 
+                       MARGIN = ifelse(taxa_are_rows(picrust_IBK_ps), yes = 1, no = 2), 
+                       FUN = function(x){sum(x > 0)})
+prevdf_ko <- data.frame(Prevalence= prevdf_ko, TotalAbundance=taxa_sums(picrust_IBK_ps))
+#View(prevdf_ko)
+
+ps_IBK_ko <- rownames(prevdf_ko)[prevdf_ko$Prevalence > 10] #with 5 = 7031; with 10 = 6910
+ps_IBK_ko
+
+ps_IBK_analyze_ko <- prune_taxa(ps_IBK_ko, picrust_IBK_ps)
+ps_IBK_analyze_ko
+sum(otu_table(ps_IBK_analyze_ko))/sum(otu_table(picrust_IBK_ps))
+#save(ps_IBK_analyze_ko, file = "ps_IBK_analyze_ko.rds")
+#load("ps_IBK_analyze_ko.rds")
+#sum(otu_table(ps_IBK_analyze_ko)) 
+```
+
+# transform sample counts into relative abundances
+```{r, echo= True}
+picrust_IBK_ps.prop <- transform_sample_counts(ps_IBK_analyze_ko, function (OTU) OTU/sum(OTU)) 
+save(picrust_IBK_ps.prop, file = "picrust_IBK_ps.prop.rds")
+load("picrust_IBK_ps.prop.rds")
+```
+
+#alpha diversity (did not use)
+```{r, echo= True}
+ps_rarefyko <- rarefy_even_depth(ps_IBK_analyze_ko, sample.size = min(sample_sums(picrust_IBK_ps)),
+  rngseed = T, replace = TRUE, trimOTUs = TRUE, verbose = TRUE)
+Chao1_obser_rarefyko= estimate_richness(ps_rarefyko, split = TRUE, measures = c("Chao1"))
+head(Chao1_obser_rarefyko)
+sample_sums(ps_IBK_analyze_ko)
+obser_rarefyko= estimate_richness(ps_rarefyko, split = TRUE, measures = c("Observed"))
+head(obser_rarefyko)
+
+Chao1_obser_rarefy_metadatako= merge(mappingfile_IBKY1,Chao1_obser_rarefyko, by= "row.names")
+head(Chao1_obser_rarefy_metadatako)
+
+#rarefy with t test
+library("ggpubr")
+library("tidyverse")
+alpha_measko = c("Observed", "Chao1")
+(p <- plot_richness(ps_rarefyko, "Time", measures=alpha_meas))
+
+test_alpha <- (p + geom_boxplot(data=p$data, aes(x=values(), y=Time, color=NULL), alpha=0.05)) 
+
+
+observed_pairwiseko <- pairwise.wilcox.test(obser_rarefyko$Observed, sample_data(ps_rarefy)$Time)
+chao1_pairwiseko <- pairwise.wilcox.test(Chao1_obser_rarefyko$Chao1, sample_data(ps_rarefy)$Time)
+
+```
+
+#beta diversity plot for KEGG genes
+```{r, echo= True}
+bray_IBK <- ordinate(picrust_IBK_ps.prop, method = "PCoA", distance = "bray")
+bray_picrust_IBK <- plot_ordination(picrust_IBK_ps.prop, bray_IBK, color ="Time") 
+
+#pdf("KO_genes.pdf")
+#plot(bray_picrust_IBK)
+#dev.off()
+```
+
+#differential genes across time samplings
+```{r, echo= True}
+library("DESeq2")
+load("picrust_IBK_ps.rds")
+#time 1 and 2
+ps_1ko <- subset_samples(ps_IBK_analyze_ko, Date_swabbed != "6_26_18")
+ps_1_2ko <- subset_samples(ps_1ko, Date_swabbed != "10_2_18")
+
+diagdds = phyloseq_to_deseq2(ps_1_2ko, ~ Date_swabbed)
+# calculate geometric means prior to estimate size factors
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, fitType="local")
+diagdds = estimateDispersions(diagdds)
+diagvst = getVarianceStabilizedData(diagdds)
+dim(diagvst)
+
+load("picrust_IBK_ps.prop.rds")
+#Diff ASVs
+diagdds = DESeq(diagdds)  #, fitType='local')
+res_IBK = results(diagdds)
+res_IBK = res_IBK[order(res_IBK$padj, na.last = NA), ]
+alpha = 0.01
+keepOTUs25_p12ko = rownames(res_IBK[res_IBK$padj < alpha, ])[1:25]
+kosticTrimvs25_IBK_p12ko = prune_taxa(keepOTUs25_p12ko, picrust_IBK_ps.prop)
+kosticTrimvs25_IBK_p12ko
+#View(kosticTrimvs_IBK)
+#save(kosticTrimvs25_IBK_p12ko, file = "kosticTrimvs25_p12ko.rds")
+#load("kosticTrimvs_p12ko.rds")
+#write.table(otu_table(kosticTrimvs25_IBK_p12ko), "kosticTrimvs25_IBK_p12ko.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+#plot_heatmap(kosticTrimvs25_IBK_p12ko)
+```
+
+##period 1 and 3
+```{r ,echo= True}
+load("picrust_IBK_ps.rds")
+
+ps_1ko <- subset_samples(ps_IBK_analyze_ko, Date_swabbed != "6_6_18")
+ps_1_3ko <- subset_samples(ps_1ko, Date_swabbed != "10_2_18")
+
+diagdds = phyloseq_to_deseq2(ps_1_3ko, ~ Date_swabbed)
+# calculate geometric means prior to estimate size factors
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, fitType="local")
+diagdds = estimateDispersions(diagdds)
+diagvst = getVarianceStabilizedData(diagdds)
+dim(diagvst)
+
+load("picrust_IBK_ps.prop.rds")
+#Diff ASVs
+diagdds = DESeq(diagdds)  #, fitType='local')
+res_IBK = results(diagdds)
+res_IBK = res_IBK[order(res_IBK$padj, na.last = NA), ]
+alpha = 0.01
+keepOTUs25_p13ko = rownames(res_IBK[res_IBK$padj < alpha, ]) [1:25]
+kosticTrimvs25_IBK_p13ko = prune_taxa(keepOTUs25_p13ko, picrust_IBK_ps.prop)
+kosticTrimvs25_IBK_p13ko
+#View(kosticTrimvs_IBK)
+#save(kosticTrimvs25_IBK_p13ko, file = "kosticTrimvs25_p13ko.rds")
+#load("kosticTrimvs_p13ko.rds")
+#write.table(otu_table(kosticTrimvs25_IBK_p13ko), "kosticTrimvs25_IBK_p13ko.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+#plot_heatmap(kosticTrimvs25_IBK_p13ko, sample.label = "Time", sample.order = "Time", taxa.order= "Phylum", taxa.label = "Family")
+```
+
+##period 1 and 4
+```{r ,echo= True}
+load("picrust_IBK_ps.rds")
+
+ps_1ko <- subset_samples(ps_IBK_analyze_ko, Date_swabbed != "6_6_18")
+ps_1_4ko <- subset_samples(ps_1ko, Date_swabbed != "6_26_18")
+
+diagdds = phyloseq_to_deseq2(ps_1_4ko, ~ Date_swabbed)
+# calculate geometric means prior to estimate size factors
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, fitType="local")
+diagdds = estimateDispersions(diagdds)
+diagvst = getVarianceStabilizedData(diagdds)
+dim(diagvst)
+
+load("picrust_IBK_ps.prop.rds")
+#Diff ASVs
+diagdds = DESeq(diagdds)  #, fitType='local')
+res_IBK = results(diagdds)
+res_IBK = res_IBK[order(res_IBK$padj, na.last = NA), ]
+alpha = 0.01
+keepOTUs25_p14ko = rownames(res_IBK[res_IBK$padj < alpha, ]) [1:25]
+kosticTrimvs25_IBK_p14ko = prune_taxa(keepOTUs25_p14ko, picrust_IBK_ps.prop)
+kosticTrimvs25_IBK_p14ko
+#View(kosticTrimvs_IBK)
+#save(kosticTrimvs25_IBK_p14ko, file = "kosticTrimvs25_p14ko.rds")
+#load("kosticTrimvs_p14ko.rds")
+#write.table(otu_table(kosticTrimvs25_IBK_p14ko), "kosticTrimvs25_IBK_p14ko.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+#plot_heatmap(kosticTrimvs25_IBK_p14ko, sample.label = "Time", sample.order = "Time", taxa.order= "Phylum", taxa.label = "Family")
+```
+
+#period 2 and 3
+```{r ,echo= True}
+load("picrust_IBK_ps.rds")
+
+ps_2ko <- subset_samples(ps_IBK_analyze_ko, Date_swabbed != "5_16_18")
+ps_2_3ko <- subset_samples(ps_2ko, Date_swabbed != "10_2_18")
+
+diagdds = phyloseq_to_deseq2(ps_2_3ko, ~ Date_swabbed)
+# calculate geometric means prior to estimate size factors
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, fitType="local")
+diagdds = estimateDispersions(diagdds)
+diagvst = getVarianceStabilizedData(diagdds)
+dim(diagvst)
+
+load("picrust_IBK_ps.prop.rds")
+#Diff ASVs
+diagdds = DESeq(diagdds)  #, fitType='local')
+res_IBK = results(diagdds)
+res_IBK = res_IBK[order(res_IBK$padj, na.last = NA), ]
+alpha = 0.01
+keepOTUs25_p23ko = rownames(res_IBK[res_IBK$padj < alpha, ]) [1:25]
+kosticTrimvs25_IBK_p23ko = prune_taxa(keepOTUs25_p23ko, picrust_IBK_ps.prop)
+kosticTrimvs25_IBK_p23ko
+#View(kosticTrimvs_IBK)
+#save(kosticTrimvs25_IBK_p23ko, file = "kosticTrimvs25_p23ko.rds")
+#load("kosticTrimvs_p23ko.rds")
+#write.table(otu_table(kosticTrimvs25_IBK_p23ko), "kosticTrimvs25_IBK_p23ko.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+#plot_heatmap(kosticTrimvs25_IBK_p23ko, sample.label = "Time", sample.order = "Time", taxa.order= "Phylum", taxa.label = "Family")
+```
+
+#period 2 and 4
+```{r ,echo= True}
+load("picrust_IBK_ps.rds")
+
+ps_2ko <- subset_samples(ps_IBK_analyze_ko, Date_swabbed != "5_16_18")
+ps_2_4ko <- subset_samples(ps_2ko, Date_swabbed != "6_26_18")
+
+diagdds = phyloseq_to_deseq2(ps_2_4ko, ~ Date_swabbed)
+# calculate geometric means prior to estimate size factors
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, fitType="local")
+diagdds = estimateDispersions(diagdds)
+diagvst = getVarianceStabilizedData(diagdds)
+dim(diagvst)
+
+load("picrust_IBK_ps.prop.rds")
+#Diff ASVs
+diagdds = DESeq(diagdds)  #, fitType='local')
+res_IBK = results(diagdds)
+res_IBK = res_IBK[order(res_IBK$padj, na.last = NA), ]
+alpha = 0.01
+keepOTUs25_p24ko = rownames(res_IBK[res_IBK$padj < alpha, ]) [1:25]
+kosticTrimvs25_IBK_p24ko = prune_taxa(keepOTUs25_p24ko, picrust_IBK_ps.prop)
+kosticTrimvs25_IBK_p24ko
+#View(kosticTrimvs_IBK)
+#save(kosticTrimvs25_IBK_p24ko, file = "kosticTrimvs25_p24ko.rds")
+#load("kosticTrimvs_p24ko.rds")
+#write.table(otu_table(kosticTrimvs25_IBK_p24ko), "kosticTrimvs25_IBK_p24ko.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+#plot_heatmap(kosticTrimvs25_IBK_p24ko, sample.label = "Time", sample.order = "Time", taxa.order= "Phylum", taxa.label = "Family")
+```
+#period 3 and 4
+```{r ,echo= True}
+load("picrust_IBK_ps.rds")
+
+ps_3ko <- subset_samples(ps_IBK_analyze_ko, Date_swabbed != "5_16_18")
+ps_3_4ko <- subset_samples(ps_3ko, Date_swabbed != "6_2_18")
+
+diagdds = phyloseq_to_deseq2(ps_3_4ko, ~ Date_swabbed)
+# calculate geometric means prior to estimate size factors
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, fitType="local")
+diagdds = estimateDispersions(diagdds)
+diagvst = getVarianceStabilizedData(diagdds)
+dim(diagvst)
+
+load("picrust_IBK_ps.prop.rds")
+#Diff ASVs
+diagdds = DESeq(diagdds)  #, fitType='local')
+res_IBK = results(diagdds)
+res_IBK = res_IBK[order(res_IBK$padj, na.last = NA), ]
+alpha = 0.01
+keepOTUs25_p34ko = rownames(res_IBK[res_IBK$padj < alpha, ]) [1:25]
+kosticTrimvs25_IBK_p34ko = prune_taxa(keepOTUs25_p34ko, picrust_IBK_ps.prop)
+kosticTrimvs25_IBK_p34ko
+#View(kosticTrimvs_IBK)
+#save(kosticTrimvs25_IBK_p34ko, file = "kosticTrimvs25_p34ko.rds")
+#load("kosticTrimvs_p34ko.rds")
+#write.table(otu_table(kosticTrimvs25_IBK_p34ko), "kosticTrimvs25_IBK_p34ko.txt", sep = "\t", row.names = TRUE, col.names = NA, quote = FALSE)
+#plot_heatmap(kosticTrimvs25_IBK_p34ko)
+```
+
+#top 25 unique diff asvs merged from time periods 1-4
+```{r ,echo= True}
+diff_asvs_between_time25ko <- c(keepOTUs25_p12ko, keepOTUs25_p13ko, keepOTUs25_p14ko, keepOTUs25_p23ko, keepOTUs25_p24ko, keepOTUs25_p34ko)
+allTaxa_IBK_diff_period25ko <- taxa_names(picrust_IBK_ps.prop)
+allTaxa1_IBK_diff_period25ko  <- allTaxa_IBK_diff_period25ko[(allTaxa_IBK_diff_period25ko %in% diff_asvs_between_time25ko)]
+IBK_diff_period25ko  <- prune_taxa(allTaxa1_IBK_diff_period25ko, picrust_IBK_ps.prop)
+taxa_names(IBK_diff_period25ko )
+#save(IBK_diff_period25ko , file = "IBK_diff_period25ko.rds")
+#load("IBK_diff_period25ko.rds")
+#write.table(otu_table(IBK_diff_period25ko), "IBK_diff_period25ko.txt", sep = "\t", row.names = T, col.names = NA, quote = F)
+plot_heatmap(IBK_diff_period25ko, sample.order = "Time")
+
+```
+```{r ,echo=TRUE}
+#install.packages("dplyr")
+library("pheatmap")
+library("dplyr")
+
+test_KO <- otu_table(t(IBK_diff_period25ko))
+KO_df_t <- as.data.frame(test_KO)
+dim(KO_df_t)
+head(KO_df_t[, 1:20])
+View(KO_df_t)
+write.table(otu_table(test_KO),file = "norm_ko_pheatmap1.txt", sep = "\t", quote = F, row.names = T, col.names = NA)
+
+ko_pheatmap <- read.table("norm_ko_pheatmap2.txt",  sep = "\t", header = T, quote = "", stringsAsFactors = F, row.names = 1, check.names = F)
+ko_pheatmap1 <- as.data.frame(ko_pheatmap)
+View(ko_pheatmap1)
+
+
+Bac.factors_IBK <- read.csv(file = "sample_names_pheatmap_2.csv", header = TRUE, row.names = 1)
+str(Bac.factors_IBK)
+Bac.factorsDS_IBK <- select(Bac.factors_IBK,Time)
+
+
+breaksList = seq(0, .00001, by = .0000001)
+
+#SampleOrder = order(Bac.factorsDS$Sampling)
+
+pheatmap(ko_pheatmap1, breaks = breaksList, cluster_cols = F, cluster_rows = F, annotation_col = Bac.factors_IBK,fontsize_row = 4, fontsize_col = 0.5)
+
+
+pdf("ko_dff.pdf")
+plot(pheatmap(ko_pheatmap1, breaks = breaksList, cluster_cols = F, cluster_rows = F, annotation_col = Bac.factors_IBK,fontsize_row = 4, fontsize_col = 0.5))
+dev.off()
+```
+
+```{r, echo= True}
+metadata <- as(sample_data(picrust_IBK_ps.prop), "data.frame")
+
+adonis(phyloseq::distance(picrust_IBK_ps.prop, method="bray") ~   Treatment + Time + Hide + Sex + Breed + Days_from_birth + Ulcer_positive,
+       data = metadata)
+
+View(picrust_IBK_ps.prop)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+##############################sub study analysis######################
+
+```{r ,echo=TRUE}
+fastq_files= "fastq_files"
+list.files(fastq_files)
+```
+
+#filtering and trimming
+```{r ,echo=TRUE}
+fnFs <- sort(list.files(fastq_files, pattern="_R1_001.fastq.gz"))
+fnRs <- sort(list.files(fastq_files, pattern="_R2_001.fastq.gz"))
+# Extract sample names, assuming filenames have format: SAMPLENAME_XXX.fastq
+sampleNames <- sapply(strsplit(fnFs, "_"), `[`, 1)
+# Specify the full path to the fnFs and fnRs
+fnFs <- file.path(fastq_files, fnFs)
+fnRs <- file.path(fastq_files, fnRs)
+# Extract sample names, assuming filenames have format: SAMPLENAME_XXX.fastq
+sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 1)
+fnFs[1:3]
+fnRs[1:3]
+```
+
+#quality plot (foward)
+```{r ,echo=TRUE}
+plotQualityProfile(fnFs[1:10])
+
+```
+
+#quality plot (reverse)
+```{r ,echo=TRUE}
+#The first two reverse reads:
+plotQualityProfile(fnRs[1:5])
+```
+
+#trimming and filtering the F/R reads
+```{r ,echo=TRUE}
+filt_path <- file.path(fastq_files, "filtered") 
+if(!file_test("-d", filt_path)) dir.create(filt_path)
+filtFs <- file.path(filt_path, paste0(sampleNames, "_F_filt.fastq.gz"))
+filtRs <- file.path(filt_path, paste0(sampleNames, "_R_filt.fastq.gz"))
+
+#filting the forward and reverse reads
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen=c(235,175),
+                    maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE,
+                  compress=TRUE, multithread=TRUE, matchIDs = T)
+out
+fnFs
+fnRs
+```
+
+```{r ,echo=TRUE}
+saveRDS(out, "out.RDS")
+write.table(out, file="out.txt", col.names=T, row.names=T, sep = "\t",quote=F)
+```
+
+#Data Statistics after Trimming
+```{r ,echo=TRUE}
+sum(out[,1]) #total reads in 3152197
+sum(out[,2]) #total reads out 2841210
+sum(out[,1]) - sum(out[,2]) #reads lost 310987
+sum(out[,2])/sum(out[,1]) # percentage data retained 90%
+```
+
+#Dereplication/error plots
+```{r ,echo=TRUE}
+#to avoid error, due to very low reads
+exists <- file.exists(filtFs) & file.exists(filtRs)
+filtFs <- filtFs[exists]
+filtRs <- filtRs[exists]
+#Dereplication
+derepFs <- derepFastq(filtFs, verbose=TRUE)
+derepRs <- derepFastq(filtRs, verbose=TRUE)
+# Name the derep-class objects by the sample names
+names(derepFs) <- sampleNames
+names(derepRs) <- sampleNames
+
+errF <- learnErrors(filtFs, multithread=TRUE)
+
+errR <- learnErrors(filtRs, multithread=TRUE)
+
+
+plotErrors(errF)
+plotErrors(errR)
+
+
+save(exists, filtFs, filtRs, derepFs, derepRs, errF, errR, file = "sub2020.rds")
+```
+
+
+```{r ,echo=TRUE}
+dadaFs <- dada(derepFs, err=errF, multithread=TRUE)
+
+dadaRs <- dada(derepRs, err=errR, multithread=TRUE)
+
+dadaFs[[1]]
+```
+
+#Construct sequence table and remove chimeras
+```{r ,echo=TRUE}
+mergers <- mergePairs(dadaFs, derepFs, dadaRs, derepRs, verbose=T)
+head(mergers[[1]])
+```
+
+```{r ,echo=TRUE}
+seqtabAll <- makeSequenceTable(mergers)
+dim(seqtabAll)
+table(nchar(getSequences(seqtabAll)))
+write.table(seqtabAll, file="seqtabAll.txt", col.names=T, row.names=T, sep = "\t",quote=F)
+
+seqtabNoC <- removeBimeraDenovo(seqtabAll)
+write.table(seqtabNoC, file="seqtabNoC.txt", col.names=NA, row.names=T, sep = "\t",quote=F)
+
+saveRDS(seqtabNoC, "SEQTAB_nOc.RDS")
+SEQTAB <- readRDS("SEQTAB_nOc.RDS")
+dim(SEQTAB)
+dim(seqtabNoC) #105 5126
+t_seqtabNoC= t(seqtabNoC)
+dim(t_seqtabNoC)
+table(nchar(getSequences(SEQTAB)))
+```
+
+#Assigning Taxonomy 
+```{r ,echo=TRUE}
+fastaRef= "./silva_nr_v138_train_set.fa"
+taxTab <- assignTaxonomy(seqtabNoC, refFasta = fastaRef, multithread=TRUE)
+saveRDS(taxTab, "taxTab.RDS")
+#readRDS("taxTab.RDS")
+#taxTab <- readRDS("taxTab.RDS")
+
+taxTa <- addSpecies(taxTab, "silva_species_assignment_v138.fa", verbose=TRUE)
+#494 assigned at species level
+saveRDS(taxTa, "taxTa.RDS")
+taxTa <- readRDS("taxTa.RDS")
+write.table(taxTa, file="Analysis/taxTa_species.txt", col.names=T, row.names=T, sep = "\t")
+
+```
+
+#Extracting the standard goods from R
+```{r ,echo=TRUE}
+ # giving our seq headers more manageable names (ASV_1, ASV_2...)
+asv_seqs <- colnames(seqtabNoC)
+asv_headers <- vector(dim(seqtabNoC)[2], mode="character")
+
+for (i in 1:dim(seqtabNoC)[2]) {
+  asv_headers[i] <- paste(">ASV", i, sep="_")
+}
+
+  # making and writing out a fasta of our final ASV seqs:
+asv_fasta <- c(rbind(asv_headers, asv_seqs))
+write(asv_fasta, "Analysis/ASVs.fa")
+
+  # count table:
+asv_tab <- t(seqtabNoC)
+row.names(asv_tab) <- sub(">", "", asv_headers)
+write.table(asv_tab, "Analysis/ASVs_counts.txt", sep="\t", quote=F)
+
+ # tax table:
+asv_tax <- taxTab
+row.names(asv_tax) <- sub(">", "", asv_headers)
+write.table(asv_tax, "Analysis/ASVs_taxonomy.txt", sep="\t", quote=F)
+
+
+```
+
+
+#bring mapping file in
+```{r ,echo=TRUE}
+mappingfile_IBK2020 <- read.table("IBK_2020_substudy_mapping_file.txt", sep = "\t", header = T)
+View(mappingfile_IBK2020)
+```
+
+#read mapping file/ bring phyloseq tree in (use above to see how to generate tree from mothur)
+```{r ,echo=TRUE}
+View(mappingfile_IBK2020)
+row.names(mappingfile_IBK2020) = mappingfile_IBK2020$Sample_ID
+#View(mapping_file)
+
+rownames(mappingfile_IBK2020) = mappingfile_IBK2020$Sample_ID
+
+
+
+#Use when you cant use below on ps phyloseq merging
+ps1 <- phyloseq(otu_table(SEQTAB, taxa_are_rows = FALSE))
+
+ps2 <- merge_phyloseq(ps1, sample_data(mappingfile_IBK2020))
+ps3 <- merge_phyloseq(ps2, tax_table(taxTa))
+
+
+taxa_names(ps3) <- paste0("ASV_", seq(ntaxa(ps3))) #this command is used when wanting to name ASV 
+
+
+
+row.names(mappingfile_IBK2020) <- as.character(mappingfile_IBK2020[, 1])
+
+
+#import tree from mothur
+
+tree_file <- 'ASVs2020.phylip.tre'
+phylo_tree <- read_tree(tree_file)
+
+taxa_names(ps3) <- paste0("ASV_", seq(ntaxa(ps3)))
+
+ps_IBK2020 <- merge_phyloseq(ps3, phy_tree(phylo_tree))
+
+
+save(ps_IBK2020, file = "ps_IBK2020.rds")
+load("ps_IBK2020.rds")
+```
+
+#filtering out Eukaryota
+```{r ,echo=TRUE}
+remove_kingdoms <- c( "Archaea", "Eukaryota")
+ps_filtered_pinkeye2020 <- subset_taxa(ps_IBK2020, !Kingdom %in% remove_kingdoms)
+
+
+save(ps_filtered_pinkeye2020, file = "ps_filtered_eukaryota_pinkeye2020.rds")
+#load("ps_filtered_eurkaryota_pinkeye.rds")
+```
+
+#filtering out neg controls
+```{r ,echo=TRUE}
+ps_pinkeye_neg2020 <- subset_samples(ps_filtered_pinkeye2020, Animal_ID != "NEG_CON")
+
+save(ps_pinkeye_neg2020, file = "ps_pinkeye_neg2020.rds")
+load("ps_pinkeye_neg2020.rds")
+
+write.table(otu_table(ps_pinkeye_neg2020, taxa_are_rows = FALSE), "2020_pinkeye.txt", sep = "\t", col.names = NA, row.names = TRUE, quote = FALSE)
+
+
+min <- min(sample_sums(ps_pinkeye_neg2020))
+reads_per_sample1 <- data.frame(Reads = sample_sums(ps_pinkeye_neg2020))
+reads_per_sample1$Sample_ID <- rownames(reads_per_sample1)
+fil= c("25", "44", "63", "90") 
+
+ps_pinkeye_analyze2020= prune_samples(!(sample_names(ps_pinkeye_neg2020) %in% fil), ps_pinkeye_neg2020)
+ps_pinkeye_analyze2020
+```
+
+#prevalance of each ASV Anything less than 1 is removed
+```{r ,echo=TRUE}
+prevdf_ps= apply(X = otu_table(ps_pinkeye_analyze2020), 
+                       MARGIN = ifelse(taxa_are_rows(ps_pinkeye_analyze2020), yes = 1, no = 2), 
+                       FUN = function(x){sum(x > 0)})
+prevdf_ps <- data.frame(Prevalence= prevdf_ps, TotalAbundance=taxa_sums(ps_pinkeye_analyze2020))
+#View(prevdf_ps)
+
+ps_IBK_run2020 <- rownames(prevdf_ps)[prevdf_ps$Prevalence > 1]
+
+
+ps_IBK_analyze2020 <- prune_taxa(ps_IBK_run2020, ps_pinkeye_analyze2020) #1434
+
+sum(otu_table(ps_IBK_analyze2020))/sum(otu_table(ps_pinkeye_analyze2020)) #96.6% those reads
+save(ps_IBK_analyze2020, file = "ps_IBK_analyze2020.rds")
+load("ps_IBK_analyze2020.rds")
+sum(otu_table(ps_IBK_analyze2020)) #total reads retained 96% from 2,462,425 reads
+```
+
+
+#Normalize Data set
+```{r ,echo=TRUE}
+ps_ibkanalyze2020 <- subset_samples(ps_IBK_analyze2020, Animal_ID != "Pos_control")
+norm_IBK2020  <-  transform_sample_counts(ps_ibkanalyze2020, function(x) x / sum(x) )
+save(norm_IBK2020, file= "norm_IBK2020.rds")
+load("norm_IBK2020.rds")
+```
+
+#rarefy Observed
+```{r ,echo=TRUE}
+library("ggpubr")
+library("tidyverse")
+
+ps_rarefy2020 <- rarefy_even_depth(ps_ibkanalyze2020, sample.size = min(sample_sums(ps_ibkanalyze2020)),
+  rngseed = T, replace = TRUE, trimOTUs = TRUE, verbose = TRUE)
+alpha_meas = c("Observed", "Chao1")
+
+results_ibk = estimate_richness(ps_ibkanalyze2020, measures = "Observed")
+results_ibk_df <- as.data.frame(results_ibk)
+results_ibk_df$Number <- rownames(results_ibk_df)
+results_ibk_df <- results_ibk_df[c(2,1)] #vector-- makes the order that you want the columns to be in.
+#View(results_ibk_df)
+
+ibk_alpha_div_df <- merge(results_ibk_df, mappingfile_IBK2020, by='Number') 
+
+alpha_plot_ob <- ggplot(ibk_alpha_div_df, aes(x=Cohort, y=Observed, fill= Date_Sampled)) + geom_boxplot() + labs(fill = "Date_Sampled")
+
+alpha_plot_ob
+
+sample_sums(ps_rarefy2020) #3,514
+#pdf("alpha_plot_ob.pdf")
+#plot(alpha_plot_ob)
+#dev.off()
+```
+
+#rarefy Chao1
+```{r ,echo=TRUE}
+library("ggpubr")
+library("tidyverse")
+
+ps_rarefy2020 <- rarefy_even_depth(ps_ibkanalyze2020, sample.size = min(sample_sums(ps_ibkanalyze2020)),
+  rngseed = T, replace = TRUE, trimOTUs = TRUE, verbose = TRUE)
+alpha_meas = c("Observed", "Chao1")
+
+View(results_ibk_df)
+results_ibk = estimate_richness(ps_ibkanalyze2020, measures = "Chao1")
+results_ibk_df <- as.data.frame(results_ibk)
+results_ibk_df$Number <- rownames(results_ibk_df)
+results_ibk_df <- results_ibk_df[c(3,1,2)] #vector-- makes the order that you want the columns to be in.
+
+ibk_alpha_div_df <- merge(results_ibk_df, mappingfile_IBK2020, by='Number') 
+
+alpha_plot_chao1 <- ggplot(ibk_alpha_div_df, aes(x=Cohort, y=Chao1, fill= Date_Sampled)) + geom_boxplot() + labs(fill = "Date_Sampled")
+
+alpha_plot_chao1
+
+#pdf("alpha_plot_chao1.pdf")
+#plot(alpha_plot_chao1)
+#dev.off()
+```
+
+#PCoA weighted
+```{r ,echo=TRUE}
+ord.nmds.pcoa1 <- ordinate(norm_IBK2020, method="PCoA", distance="wunifrac")
+beta1 <-plot_ordination(norm_IBK2020, ord.nmds.pcoa1, color = "Date_Sampled", shape = "Swabbing") +
+  geom_point(size=3)
+
+pdf("beta_all_2020.pdf")
+plot(beta1)
+dev.off()
+```
+
+#pairwise permanova 
+```{r ,echo=TRUE}
+library(vegan)
+
+
+metadata_1 <- as(sample_data(norm_IBK2020), "data.frame")
+
+adonis(phyloseq::distance(norm_IBK2020, method="wunifrac") ~  Eye_sampled + Cohort + Date_Sampled + Swabbing, 
+       data = metadata_1)
+
+```
+
+#beta cohort a
+```{r ,echo=TRUE}
+cohorta <- subset_samples(norm_IBK2020, Cohort == "A")
+ord.nmds.pcoa2 <- ordinate(cohorta, method="PCoA", distance="wunifrac")
+beta2 <-plot_ordination(cohorta, ord.nmds.pcoa2, color = "Date_Sampled", shape = "Eye_sampled") +
+  geom_point(size=3)
+
+#pdf("beta_Cohort_A_2020.pdf")
+#plot(beta2)
+#dev.off()
+
+```
+
+#pairwise permanova 
+```{r ,echo=TRUE}
+library(vegan)
+
+
+metadata_2 <- as(sample_data(cohorta), "data.frame")
+
+adonis(phyloseq::distance(cohorta, method="wunifrac") ~  Eye_sampled + Date_Sampled, 
+       data = metadata_2)
+
+```
+
+#beta cohort b
+```{r ,echo=TRUE}
+cohortb <- subset_samples(norm_IBK2020, Cohort == "B")
+ord.nmds.pcoa3 <- ordinate(cohortb, method="PCoA", distance="wunifrac")
+beta3 <-plot_ordination(cohortb, ord.nmds.pcoa3, color = "Date_Sampled", shape = "Eye_sampled") +
+  geom_point(size=3)
+
+#pdf("beta_Cohort_B_2020.pdf")
+#plot(beta3)
+#dev.off()
+
+```
+
+#pairwise permanova 
+```{r ,echo=TRUE}
+library(vegan)
+
+
+metadata_3 <- as(sample_data(cohortb), "data.frame")
+
+adonis(phyloseq::distance(cohortb, method="wunifrac") ~  Eye_sampled + Date_Sampled, 
+       data = metadata_3)
+
+```
+
+#beta cohort c
+```{r ,echo=TRUE}
+cohortc <- subset_samples(norm_IBK2020, Cohort == "C")
+ord.nmds.pcoa4 <- ordinate(cohortc, method="PCoA", distance="wunifrac")
+beta4 <-plot_ordination(cohortc, ord.nmds.pcoa4, color = "Date_Sampled", shape = "Eye_sampled") +
+  geom_point(size=3)
+
+#pdf("beta_cohortC_2020.pdf")
+#plot(beta4)
+#dev.off()
+
+```
+
+#pairwise permanova 
+```{r ,echo=TRUE}
+library(vegan)
+
+
+metadata_4 <- as(sample_data(cohortc), "data.frame")
+
+adonis(phyloseq::distance(cohortc, method="wunifrac") ~  Eye_sampled + Date_Sampled, 
+       data = metadata_4)
+
+```
+
+##################beta with just 17d samples##################
+
+#PCoA weighted
+```{r ,echo=TRUE}
+norm_all <- subset_samples(norm_IBK2020, Date_Sampled == "17d")
+ord.nmds.pcoa5 <- ordinate(norm_all, method="PCoA", distance="wunifrac")
+beta5 <-plot_ordination(norm_all, ord.nmds.pcoa5, color = "Eye_sampled", shape = "Date_Sampled") +
+  geom_point(size=3)
+
+#pdf("beta_all_2020.pdf")
+#plot(beta5)
+#dev.off()
+```
+
+#pairwise permanova 
+```{r ,echo=TRUE}
+library(vegan)
+
+
+metadata_5 <- as(sample_data(norm_all), "data.frame")
+
+adonis(phyloseq::distance(norm_all, method="wunifrac") ~  Eye_sampled + Cohort + Swabbing, 
+       data = metadata_5)
+
+```
+
+#beta cohort a
+```{r ,echo=TRUE}
+cohorta <- subset_samples(norm_IBK2020, Cohort == "A")
+cohorta_0 <- subset_samples(cohorta, Date_Sampled == "0d")
+ord.nmds.pcoa6 <- ordinate(cohorta_17, method="PCoA", distance="wunifrac")
+beta6 <-plot_ordination(cohorta_17, ord.nmds.pcoa6, color = "Eye_sampled", shape = "Date_Sampled") +
+  geom_point(size=3)
+
+pdf("beta_Cohort_A_2020.pdf")
+plot(beta6)
+dev.off()
+
+```
+
+#pairwise permanova 
+```{r ,echo=TRUE}
+library(vegan)
+
+
+metadata_6 <- as(sample_data(cohorta), "data.frame")
+
+adonis(phyloseq::distance(cohorta, method="wunifrac") ~  Date_Sampled + Eye_sampled, 
+       data = metadata_6)
+
+```
+
+#beta cohort b
+```{r ,echo=TRUE}
+cohortb <- subset_samples(norm_IBK2020, Cohort == "B")
+cohortb_17 <- subset_samples(cohortb, Date_Sampled == "17d")
+ord.nmds.pcoa7 <- ordinate(cohortb_17, method="PCoA", distance="wunifrac")
+beta7 <-plot_ordination(cohortb_17, ord.nmds.pcoa7, color = "Eye_sampled", shape = "Date_Sampled") +
+  geom_point(size=3)
+
+pdf("beta_Cohort_B_2020.pdf")
+plot(beta7)
+dev.off()
+
+```
+
+#pairwise permanova 
+```{r ,echo=TRUE}
+library(vegan)
+
+
+metadata_7 <- as(sample_data(cohortb_17), "data.frame")
+
+adonis(phyloseq::distance(cohortb_17, method="wunifrac") ~  Eye_sampled, 
+       data = metadata_7)
+
+
+```
+
+#beta cohort c
+```{r ,echo=TRUE}
+cohortc <- subset_samples(norm_IBK2020, Cohort == "C")
+cohortc_17 <- subset_samples(cohortc, Date_Sampled == "17d")
+ord.nmds.pcoa8 <- ordinate(cohortc_17, method="PCoA", distance="wunifrac")
+beta8 <-plot_ordination(cohortc_17, ord.nmds.pcoa8, color = "Eye_sampled", shape = "Date_Sampled") +
+  geom_point(size=3)
+
+pdf("beta_cohortC_2020.pdf")
+plot(beta8)
+dev.off()
+
+```
+
+#pairwise permanova 
+```{r ,echo=TRUE}
+library(vegan)
+
+
+metadata_8 <- as(sample_data(cohortc_17), "data.frame")
+
+adonis(phyloseq::distance(cohortc_17, method="wunifrac") ~  Eye_sampled, 
+       data = metadata_8)
+
+```
